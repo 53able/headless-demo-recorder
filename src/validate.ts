@@ -95,3 +95,38 @@ export function validateScenario(s: unknown, opts: ValidateOptions = {}): Issue[
   if (e?.speechCaptions && src?.type === "browser") warn("edit.speechCaptions", "browser capture has no audio; captions will be skipped");
   return issues;
 }
+
+const EVENT_KINDS = ["click", "type", "press", "scroll", "navigate", "wait", "mark"];
+const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
+const in01 = (v: unknown): boolean => num(v) && v >= 0 && v <= 1;
+
+/** Shape of an ActionEvent[] file (a file source's `events`, or a project's events.json).
+ * Points drive zooms and the synthetic cursor, so a wrong shape or a pixel coordinate is an
+ * error. Rects only drive redaction and may legitimately hang off the frame, so out-of-range
+ * rects are warnings. */
+export function validateEvents(raw: unknown, at = "events"): Issue[] {
+  const issues: Issue[] = [];
+  const err = (path: string, message: string) => issues.push({ path, level: "error", message });
+  const warn = (path: string, message: string) => issues.push({ path, level: "warning", message });
+  if (!Array.isArray(raw)) return [{ path: at, level: "error", message: "must be an array of ActionEvent" }];
+  raw.forEach((e, i) => {
+    const p = `${at}[${i}]`;
+    if (!e || typeof e !== "object") return err(p, "must be an object");
+    if (!num(e.tMs) || e.tMs < 0) err(`${p}.tMs`, "must be a number >= 0 (ms on the video timeline)");
+    if (!EVENT_KINDS.includes(e.kind)) err(`${p}.kind`, `must be one of ${EVENT_KINDS.join(", ")}`);
+    if (e.point !== undefined) {
+      if (!(num(e.point?.cx) && num(e.point?.cy))) err(`${p}.point`, "must be {cx, cy}");
+      else if (!in01(e.point.cx) || !in01(e.point.cy)) err(`${p}.point`, "cx and cy must be fractions of the frame (0..1), not pixels");
+    }
+    if (e.rect !== undefined) {
+      if (!["x", "y", "w", "h"].every((k) => num(e.rect?.[k]))) err(`${p}.rect`, "must be {x, y, w, h}");
+      else if (!in01(e.rect.x) || !in01(e.rect.y) || !in01(e.rect.w) || !in01(e.rect.h) || e.rect.x + e.rect.w > 1 + 1e-9 || e.rect.y + e.rect.h > 1 + 1e-9)
+        warn(`${p}.rect`, "extends outside the frame (values are fractions 0..1); the redaction box may be clipped or misplaced");
+    }
+    if (e.caption !== undefined && typeof e.caption !== "string") err(`${p}.caption`, "must be a string");
+    for (const k of ["zoom", "redact"] as const) if (e[k] !== undefined && typeof e[k] !== "boolean") err(`${p}.${k}`, "must be true or false");
+    if (e.redact === true && e.rect === undefined) warn(`${p}.redact`, "has no effect without rect");
+  });
+  return issues;
+}
