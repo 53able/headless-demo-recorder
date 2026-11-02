@@ -56,6 +56,20 @@ export async function startBrowser(src: BrowserSource, workDir: string, opts: Br
     }
   };
 
+  type Tab = { tabId: string; url?: string; active?: boolean };
+  const activeTab = async () => (await abJson<{ tabs?: Tab[] }>("tab", "list").catch(() => undefined))?.tabs?.find((t) => t.active);
+  /** The tab being recorded. agent-browser moves to a tab a click opens, but the recording stays on this one. */
+  let recordedTab: string | undefined;
+  /** A step opened another tab: close it and go back, or later steps would act on a page the video does not show. */
+  const stayOnRecordedTab = async () => {
+    if (!recordedTab) return;
+    const now = await activeTab();
+    if (!now || now.tabId === recordedTab) return;
+    await ab("tab", "close", now.tabId).catch(() => undefined);
+    await ab("tab", recordedTab).catch(() => undefined);
+    throw new Error(`NEW_TAB: the step opened a new tab (${now.url ?? "unknown URL"}), which is not recorded; it was closed and the recorded tab is active again. Open that URL in this tab with an open step instead`);
+  };
+
   let closing: Promise<void> | undefined;
   const close = () => (closing ??= (async () => {
     wallMs = t0 ? Date.now() - t0 : 0;
@@ -69,6 +83,7 @@ export async function startBrowser(src: BrowserSource, workDir: string, opts: Br
     await ab("wait", "--load", "networkidle").catch(() => undefined);
     await ab("record", "start", webm, src.url);
     t0 = Date.now();
+    recordedTab = (await activeTab())?.tabId;
     log(`browser recording started: ${src.url} (${vw}x${vh})`);
     await opts.ready?.();
     await ab("wait", "--load", "networkidle").catch(() => undefined);
@@ -124,6 +139,7 @@ export async function startBrowser(src: BrowserSource, workDir: string, opts: Br
           events.push({ tMs: now(), kind: "mark", caption });
           break;
       }
+      if (step.action === "click" || step.action === "select" || step.action === "press") await stayOnRecordedTab();
     } catch (e) {
       events.length = before; // the action did not happen as logged
       throw e;

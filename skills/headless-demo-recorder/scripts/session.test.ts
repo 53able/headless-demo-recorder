@@ -208,3 +208,51 @@ test("refIssues: every desktop string is a ref and must come from the recorded w
   const browser = { scenario: { name: "b", source: { type: "browser", url: "https://example.com/" }, output: { path: "b.mp4" } } } as SessionConfig;
   expect(refIssues({ action: "click", target: "#go" }, browser, driver)).toEqual([]);
 });
+
+test("session: a click that opens a new tab is refused, the tab is closed and the recorded tab is active again", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hdr-newtab-"));
+  try {
+    const clip = join(dir, "clip.mp4");
+    expect((await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10", "-t", "2", "-c:v", "mpeg4", clip])).code).toBe(0);
+    const log = join(dir, "calls.jsonl");
+    const tab = join(dir, "active-tab");
+    // Like agent-browser: "#nt" opens t2 and makes it the active tab; "tab <id>" switches back.
+    await writeFile(join(dir, "agent-browser"), `#!${process.execPath}
+import { appendFileSync, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + "\\n");
+const has = (...w) => w.every((x) => args.includes(x));
+const active = () => (existsSync(${JSON.stringify(tab)}) ? readFileSync(${JSON.stringify(tab)}, "utf8") : "t1");
+if (has("record", "start")) writeFileSync(${JSON.stringify(join(dir, "rec"))}, args[args.indexOf("start") + 1]);
+if (has("record", "stop")) copyFileSync(${JSON.stringify(clip)}, readFileSync(${JSON.stringify(join(dir, "rec"))}, "utf8"));
+if (has("click", "#nt")) writeFileSync(${JSON.stringify(tab)}, "t2");
+const i = args.indexOf("tab");
+if (i >= 0 && args[i + 1] && !["list", "close"].includes(args[i + 1])) writeFileSync(${JSON.stringify(tab)}, args[i + 1]);
+if (has("--json", "tab", "list")) {
+  const tabs = [{ tabId: "t1", url: "http://127.0.0.1:9/", active: active() === "t1" }];
+  if (active() === "t2") tabs.push({ tabId: "t2", url: "http://127.0.0.1:9/second.html", active: true });
+  console.log(JSON.stringify({ success: true, data: { tabs } }));
+} else if (has("--json", "get", "box")) console.log(JSON.stringify({ success: true, data: { x: 10, y: 10, width: 50, height: 20 } }));
+process.exit(0);
+`);
+    await chmod(join(dir, "agent-browser"), 0o755);
+    const scenarioPath = join(dir, "s.json");
+    await writeFile(scenarioPath, JSON.stringify({ name: "t", source: { type: "browser", url: "http://127.0.0.1:9/" }, output: { path: join(dir, "out", "t.mp4") } }));
+    const env = { ...process.env, PATH: `${dir}:${process.env.PATH}` } as Record<string, string>;
+    const hdr = async (...args: string[]) => JSON.parse((await run(process.execPath, [cli, ...args], { env, timeoutMs: 60_000 })).stdout) as Record<string, any>;
+    const proj = join(dir, "out", "t.project");
+
+    expect(await hdr("session", "start", scenarioPath)).toMatchObject({ ok: true });
+    const r = await hdr("session", "act", proj, JSON.stringify({ action: "click", target: "#nt" }));
+    expect(r).toMatchObject({ ok: false, retry: "after-fix" });
+    expect(String(r.message)).toContain("NEW_TAB");
+    expect(String(r.message)).toContain("second.html");
+    expect(await hdr("session", "act", proj, JSON.stringify({ action: "click", target: "#go" }))).toMatchObject({ ok: true });
+    expect(await hdr("session", "stop", proj)).toMatchObject({ ok: true, events: 1 });
+    const calls = (await readFile(log, "utf8")).trim().split("\n").map((l) => JSON.parse(l) as string[]);
+    expect(calls.some((a) => a.includes("tab") && a.includes("close") && a.includes("t2"))).toBe(true);
+    expect(calls.some((a) => a[a.length - 2] === "tab" && a[a.length - 1] === "t1")).toBe(true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 120_000);
