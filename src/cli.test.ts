@@ -42,3 +42,12 @@ test("check: PROJECT_COLLISION in both directions", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("schema: the types, the guide and the examples, from any directory", async () => {
+  const r = JSON.parse((await run("bun", [cli, "schema"])).stdout) as { ok: boolean; guide: string; examples: string[]; types: string };
+  expect(r.ok).toBe(true);
+  expect(r.guide.endsWith("AGENTS.md")).toBe(true);
+  expect(r.types).toContain("export type Scenario");
+  expect(r.types).toContain("export type Composition");
+  expect(r.examples.some((p) => p.endsWith("composition-calc-wiki.json"))).toBe(true);
+});

@@ -46,6 +46,7 @@ OpenScreen の `--auto-zoom` は、実際のマウスクリックを手がかり
 ```bash
 bun install && bun test
 bun src/cli.ts doctor                                   # ツールと権限を確認（読み取りのみ）
+bun src/cli.ts schema                                   # 入力 JSON の型定義・手順書・例の場所
 bun src/cli.ts check scenarios/browser-wikipedia.json   # 検証のみ。何も起動しない
 bun src/cli.ts run scenarios/browser-wikipedia.json     # capture → render → inspect
 bun src/cli.ts render out/wikipedia-search.project --edit edit.json --out out/v2.mp4   # 再録画せずに再編集
@@ -113,13 +114,26 @@ kill %1
 
 ## Codex / Claude Code から使う
 
-エージェントはシェルから `bun src/cli.ts <command>` を呼び、stdout の JSON を読んで次の手を決める。作業手順とガードレールの正本は `AGENTS.md` で、Codex はこれをそのまま読む。Claude Code は `CLAUDE.md`（中身は `@AGENTS.md` の1行）を経由して同じ内容を読む。
+エージェントはシェルから `bun src/cli.ts <command>`（PATH に通したなら `headless-demo-recorder <command>`）を呼び、stdout の JSON を読んで次の手を決める。作業手順とガードレールの正本は `AGENTS.md` で、Codex はこれをそのまま読む。Claude Code は `CLAUDE.md`（中身は `@AGENTS.md` の1行）を経由して同じ内容を読む。
 
 使う前に、次を利用者が済ませておく。
 
 - 画面収録とアクセシビリティの権限を、エージェントを動かしているターミナルアプリ（Terminal、iTerm2、エディタ内蔵ターミナルなど）に付与する。`doctor` で確認できる。
 - Codex のサンドボックスでは、`doctor`、`render`、`run`、`capture`、および下見の `agent-browser` / `agent-desktop` にサンドボックス外での実行の許可が要る。`openscreen` CLI の実体は Electron アプリで、サンドボックス内で起動するとクラッシュし、macOS のクラッシュダイアログが出る。`doctor` の権限の確認も `Operation not permitted` で失敗する（いずれも実測）。`check`、`plan`、`inspect` はサンドボックス内で動く（実測）。
 - `inspectSheet` の目視確認には、画像を読めるモデルが要る。
+
+### 別のプロジェクトから使う
+
+1. コマンドを PATH に通す。`src/cli.ts` は `#!/usr/bin/env bun` で始まり、実行時の依存パッケージは無い。
+   ```bash
+   ln -s <このリポジトリ>/src/cli.ts ~/.local/bin/headless-demo-recorder   # PATH 上の任意のディレクトリ
+   headless-demo-recorder doctor
+   ```
+   `bun link` も使えるが、登録先の `~/.bun/bin` が PATH に無いと呼べない。
+2. エージェントに手順を渡す。`AGENTS.md` はこのリポジトリを開いたときにしか読まれないので、全文をグローバルな指示に貼らず、参照先だけを置く。
+   - Claude Code: ユーザー単位のスキル（`~/.claude/skills/<name>/SKILL.md`）から、このリポジトリの `AGENTS.md` を読むよう指示する。
+   - Codex: `~/.codex/AGENTS.md` に、デモ動画の依頼ではこのリポジトリの `AGENTS.md` を読むよう数行書く。
+3. 使う側のプロジェクトでは、シナリオ内のパスがカレントディレクトリからの相対になる。出力先（例: `out/`）を `.gitignore` に入れる。入力の形式はエージェントが `headless-demo-recorder schema` で確かめる。
 
 ### 任意指定の防御
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { captureBrowser } from "./capture/browser.ts";
 import { captureDesktop } from "./capture/desktop.ts";
 import { captureFile } from "./capture/file.ts";
@@ -17,6 +18,7 @@ import { type Issue, isComposition, normalizeOrigin, validateComposition, valida
 const USAGE = `headless capture → edit → export
 
   doctor                          R0  tools, versions, OS permissions (read-only)
+  schema                          R0  input formats (TypeScript types), the agent guide and example files
   check   <scenario.json>         R0  validate the scenario; nothing is launched
   capture <scenario.json>         R2  drive the UI and record → <out>.project/capture.mp4 + events.json
   render  <project-dir> [--scenario s.json] [--edit edit.json] [--out file]
@@ -310,6 +312,16 @@ async function main(argv: string[]): Promise<unknown> {
     case "doctor": {
       const checks = await doctor();
       return { ok: checks.every((c) => c.ok), checks };
+    }
+    case "schema": {
+      // The types are the schema: print them as they are, so the answer never drifts from the code.
+      const root = dirname(dirname(fileURLToPath(import.meta.url)));
+      const examples = (await readdir(join(root, "scenarios"))).filter((n) => n.endsWith(".json")).map((n) => join(root, "scenarios", n));
+      return {
+        ok: true, guide: join(root, "AGENTS.md"), examples,
+        note: "Scenario = one recording; Composition = 1-2 scenarios recorded together and joined; ActionEvent[] = an events.json. Paths inside a scenario resolve against the current directory. Value limits (0..1 fractions, max 2 scenarios, ...) are enforced by `check`.",
+        types: await readFile(join(root, "src", "types.ts"), "utf8"),
+      };
     }
     case "check": {
       if (!arg) break;
