@@ -120,8 +120,11 @@ export function composeEditor(
       const shift = (r: { startMs: number; endMs: number }) => ({ startMs: r.startMs + sc.offsetMs, endMs: r.endMs + sc.offsetMs });
 
       for (const z of compileZooms(local, segLen, plan.zoom)) zooms.push({ ...z, ...shift(z), focus: mapPoint(z.focus, st.content) });
-      for (const a of compileAnnotations(local, segLen, { ...plan, redact, captionFontSize: fontSize }))
+      for (const a of compileAnnotations(local, segLen, { ...plan, redact, captionFontSize: fontSize })) {
+        // The padded final frame still contains the redacted pixels.
+        if (a.type === "blur" && a.endMs === segLen) a.endMs += st.padMs;
         annotations.push({ ...a, ...shift(a), ...mapBox(a, a.type === "blur" ? st.content : st.cell), id: `s${i + 1}-${j + 1}-${a.id}` });
+      }
       for (const e of local)
         events.push({
           ...e,

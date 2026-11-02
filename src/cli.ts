@@ -130,7 +130,7 @@ async function compositionIssues(raw: unknown, f: Flags): Promise<{ issues: Issu
       continue;
     }
     issues.push(...(await scenarioIssues(s, f)).map((x) => ({ ...x, path: `scenarios[${i}](${p}).${x.path}` })));
-    const ignored = ["trim", "idleSpeedupMs", "idleSpeed", "speechCaptions", "redact"].filter((k) => (s as Scenario).edit && k in (s as Scenario).edit!);
+    const ignored = ["trim", "idleSpeedupMs", "idleSpeed", "speechCaptions"].filter((k) => (s as Scenario).edit && k in (s as Scenario).edit!);
     if (ignored.length) issues.push({ path: `scenarios[${i}](${p}).edit`, level: "warning", message: `${ignored.join(", ")} is ignored in a composition` });
     scenarios.push(s as Scenario);
   }

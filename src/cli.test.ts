@@ -12,7 +12,7 @@ test("check: PROJECT_COLLISION in both directions", async () => {
   const dir = await mkdtemp(join(tmpdir(), "hdr-collide-"));
   try {
     const a = join(dir, "a.json");
-    await writeFile(a, JSON.stringify(scenario("a", join(dir, "a.mp4"))));
+    await writeFile(a, JSON.stringify({ ...scenario("a", join(dir, "a.mp4")), edit: { redact: [{ rect: { x: 0, y: 0, w: 0.2, h: 0.2 }, startMs: 0, endMs: 1000 }] } }));
     const comp = (out: string) => ({ name: "c", scenarios: [a], scenes: [{ layout: "single", streams: [{ scenario: "a" }] }], output: { path: out } });
     const check = async (c: object) => {
       const p = join(dir, "comp.json");
@@ -20,7 +20,9 @@ test("check: PROJECT_COLLISION in both directions", async () => {
       return JSON.parse((await run("bun", [cli, "check", p])).stdout) as { ok: boolean; issues: { path: string; message: string }[] };
     };
 
-    expect((await check(comp(join(dir, "c.mp4")))).ok).toBe(true);
+    const valid = await check(comp(join(dir, "c.mp4")));
+    expect(valid.ok).toBe(true);
+    expect(valid.issues.some((i) => i.message.includes("redact"))).toBe(false);
 
     // The composition's output lands on an existing single-scenario project.
     await mkdir(join(dir, "solo.project"));

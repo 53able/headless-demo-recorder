@@ -109,3 +109,23 @@ test("emptyStreams names a stream whose startMs is past the recording end", () =
   expect(emptyStreams(scenes)).toEqual(["scenes[0] a"]);
   expect(scenes[0]!.streams[0]!.end).toBe(20000); // clamped to start, never negative
 });
+
+for (const startMs of [0, 2000]) test(`redaction covers the frozen tail after cutting at ${startMs}ms`, () => {
+  const c = comp([{ layout: "side-by-side", streams: [{ scenario: "a", startMs }, { scenario: "b" }] }]);
+  const { patch } = composeEditor(c, {
+    a: cap(1280, 720, 4000, [click(1000, 0.5, 0.5, { redact: true })]),
+    b: cap(1280, 720, 6000, []),
+  }, {});
+  expect(patch.annotationRegions.find((a) => a.type === "blur")).toMatchObject({ startMs: Math.max(0, 1000 - startMs), endMs: 6000 });
+});
+
+
+test("scenario edit.redact is inherited and shifted to the scene timeline", () => {
+  const c = comp([{ layout: "single", streams: [{ scenario: "a", startMs: 2000 }] }]);
+  const { patch } = composeEditor(c, { a: cap(1920, 1080, 6000, []) }, {
+    a: { redact: [{ rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 }, startMs: 3000, endMs: 5000 }] },
+  });
+  expect(patch.annotationRegions.find((a) => a.type === "blur")).toMatchObject({
+    startMs: 1000, endMs: 3000,
+  });
+});
