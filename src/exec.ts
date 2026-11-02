@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 
 export type RunResult = { code: number; stdout: string; stderr: string };
 
-export const log = (...a: unknown[]) => console.error("[capture-agent]", ...a);
+export const log = (...a: unknown[]) => console.error("[headless-demo-recorder]", ...a);
 
 // Set by the CLI's SIGINT/SIGTERM handler. Normal work (run, sleep) stops; cleanup work
 // (`cleanup: true`) still runs so `finally` blocks can stop recorders and close sessions.
