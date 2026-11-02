@@ -37,9 +37,9 @@ export function alignLeadMs(captures: Record<string, AlignedCapture>): Record<st
   return Object.fromEntries(Object.entries(captures).map(([n, c]) => [n, latest - c.t0EpochMs!]));
 }
 
-/** Streams whose segment is empty (startMs past the aligned end); ffmpeg would silently emit no frames. */
+/** Streams whose segment holds less than one frame (startMs past the aligned end); ffmpeg would silently emit no frames. */
 export const emptyStreams = (scenes: ScenePlan[]) =>
-  scenes.flatMap((sc, i) => sc.streams.filter((s) => s.end <= s.start).map((s) => `scenes[${i}] ${s.scenario}`));
+  scenes.flatMap((sc, i) => sc.streams.filter((s) => s.end - s.start < 1000 / 30).map((s) => `scenes[${i}] ${s.scenario}`));
 
 const cellPx = (cell: NRect, [W, H]: Size) => ({ w: Math.round(cell.w * W), h: Math.round(cell.h * H) });
 

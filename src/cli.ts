@@ -154,6 +154,9 @@ async function loadComposition(path: string, f: Flags): Promise<{ comp: Composit
 
 async function doCapture(scenario: Scenario, f: Flags, extra: { sessionName?: string; ready?: () => Promise<void>; runId?: string } = {}): Promise<{ projDir: string; capture: CaptureResult }> {
   const projDir = projectDirFor(scenario);
+  if (await exists(join(projDir, "composition.json"))) {
+    throw new ToolError("capture", "PROJECT_COLLISION", `${projDir} is a composition's project`, "after-fix", "change this scenario's output.path; nothing was launched");
+  }
   if ((await exists(join(projDir, "capture.json"))) && !f.force) {
     throw new ToolError("capture", "CAPTURE_EXISTS", `${projDir} already has a capture`, "after-fix", `re-edit it with: render ${projDir} --scenario <file> (or pass --force to record again)`);
   }
@@ -185,6 +188,8 @@ async function loadProject(projDir: string): Promise<CaptureResult> {
   const p = resolve(projDir);
   if (!(await exists(join(p, "capture.json")))) throw new ToolError("render", "NO_CAPTURE", `${p} has no capture.json`, "after-fix", "run `capture <scenario>` first");
   const capture = await readJson<CaptureResult>(join(p, "capture.json"), "render");
+  // The video is always the project's own capture.mp4; capture.json's videoPath is not trusted.
+  capture.videoPath = join(p, "capture.mp4");
   // events.json is the editable source of truth for timing/captions.
   capture.events = await readJson(join(p, "events.json"), "render");
   const errors = validateEvents(capture.events, "events.json").filter((i) => i.level === "error");
@@ -221,12 +226,13 @@ async function captureAll(scenarios: Scenario[], f: Flags, compositionArg: strin
     }
   }
   const base = f.opts["session-name"] ?? `headless-demo-recorder-${process.pid}-${Date.now()}`;
+  const runId = `${base}-${Date.now()}`; // unique per run even with a fixed --session-name
   const gate = barrier(scenarios.length, 120_000);
   // allSettled, not all: an early reject would let main exit before the others clean up.
   const settled = await Promise.allSettled(scenarios.map(async (s) => {
     let arrived = false;
     try {
-      return await doCapture(s, f, { sessionName: `${base}-${s.name}`, runId: base, ready: () => ((arrived = true), gate.arrive()) });
+      return await doCapture(s, f, { sessionName: `${base}-${s.name}`, runId, ready: () => ((arrived = true), gate.arrive()) });
     } catch (e) {
       // Failed before recording: stop the others at the barrier rather than let them act alone.
       if (!arrived && s.source.type !== "file") gate.fail(new Error(`${s.name} failed before recording started`));
@@ -253,19 +259,19 @@ async function renderComposition(compProj: string, comp: Composition, compPath: 
   if (!f.force && (await exists(outPath))) throw new ToolError("render", "OUTPUT_EXISTS", `${outPath} already exists`, "after-fix", "pass --force to overwrite, or change output.path");
   await assertCompositeDir(compProj, "render");
   const captures: Record<string, CaptureResult> = {};
-  // The video is always the project's own capture.mp4; capture.json's videoPath is not trusted as an ffmpeg input.
-  for (const s of scenarios) captures[s.name] = { ...(await loadProject(projectDirFor(s))), videoPath: join(projectDirFor(s), "capture.mp4") };
+  for (const s of scenarios) captures[s.name] = await loadProject(projectDirFor(s));
   const { patch, events, scenes } = composeEditor(comp, captures, Object.fromEntries(scenarios.map((s) => [s.name, s.edit])));
   const empty = emptyStreams(scenes);
   if (empty.length) throw new ToolError("render", "EMPTY_SEGMENT", `no video in: ${empty.join(", ")}`, "after-fix", "lower that stream's startMs (it is past the end of the aligned recording)");
   await mkdir(compProj, { recursive: true });
+  // Written first: a project with capture.json but no composition.json reads as a single-scenario project.
+  await writeFile(join(compProj, "composition.json"), JSON.stringify({ source: resolve(compPath), composition: comp }, null, 2));
   const video = join(compProj, "capture.mp4");
   const probe = await buildComposite(scenes, captures, comp.size ?? DEFAULT_SIZE, video);
   const capture: CaptureResult = { videoPath: video, ...probe, events, realCursor: false };
   await writeFile(join(compProj, "capture.json"), JSON.stringify(capture, null, 2));
   // Derived each render; edit the referenced projects' events.json instead.
   await writeFile(join(compProj, "events.json"), JSON.stringify(events, null, 2));
-  await writeFile(join(compProj, "composition.json"), JSON.stringify({ source: resolve(compPath), composition: comp }, null, 2));
   return render(compProj, comp.name, capture, { ...comp.edit } as EditPlan, comp.output, { force: f.force, patch });
 }
 
