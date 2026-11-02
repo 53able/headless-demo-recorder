@@ -43,7 +43,7 @@
     },
     "titles": [
       {
-        "text": "capture-agent demo",
+        "text": "headless-demo-recorder demo",
         "startMs": 0,
         "endMs": 1200
       }
