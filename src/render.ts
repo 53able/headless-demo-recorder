@@ -1,4 +1,4 @@
-import { access, stat, writeFile } from "node:fs/promises";
+import { access, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { compileEditor, synthesizeCursor } from "./compile.ts";
 import { ffprobe, log, parseNdjson, run } from "./exec.ts";
@@ -37,6 +37,17 @@ export type RenderResult = {
 /** Written next to the capture so `inspect` can report whether the export's timeline was edited. */
 export const RENDER_RECORD = "render.json";
 
+/** Write (or remove) `<video>.cursor.json`, which OpenScreen (v1.13) auto-loads from next to the
+ * video. A synthetic track left by an earlier render must go when this render wants no cursor;
+ * a real-cursor recording's sidecar is the recorded telemetry and is never touched. */
+export async function syncCursorSidecar(capture: CaptureResult, plan: EditPlan): Promise<boolean> {
+  const sidecar = `${capture.videoPath}.cursor.json`;
+  const want = plan.syntheticCursor ?? (!capture.realCursor && capture.events.some((e) => e.point));
+  if (want) await writeFile(sidecar, JSON.stringify(synthesizeCursor(capture.events, capture.durationMs)));
+  else if (!capture.realCursor) await rm(sidecar, { force: true });
+  return want;
+}
+
 /** Compile edits into a .openscreen project next to the captured media and export it.
  * Re-runnable: it only reads capture.mp4/events and rewrites the project + output. */
 export async function render(projDir: string, name: string, capture: CaptureResult, plan: EditPlan, output: Output, opts: { force?: boolean } = {}): Promise<RenderResult> {
@@ -47,10 +58,7 @@ export async function render(projDir: string, name: string, capture: CaptureResu
   const video = capture.videoPath;
 
   const patch = compileEditor(capture, plan);
-  const wantCursor = plan.syntheticCursor ?? (!capture.realCursor && capture.events.some((e) => e.point));
-  if (wantCursor) {
-    await writeFile(`${video}.cursor.json`, JSON.stringify(synthesizeCursor(capture.events, capture.durationMs)));
-  }
+  const wantCursor = await syncCursorSidecar(capture, plan);
 
   const { style, ...regions } = patch;
   const isGif = outPath.endsWith(".gif");
