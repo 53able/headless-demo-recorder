@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "./exec.ts";
@@ -53,3 +53,39 @@ test("schema: the types, the guide and the examples, from any directory", async 
   expect(r.types).toContain("export type Composition");
   expect(r.examples.some((p) => p.endsWith("composition-calc-wiki.json"))).toBe(true);
 });
+
+for (const failingSource of ["browser", "file"] as const) {
+  test(`composition: ${failingSource} preparation failure prevents peer actions`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "hdr-start-failure-"));
+    try {
+      const log = join(dir, "calls.jsonl");
+      const browser = join(dir, "agent-browser");
+      await writeFile(browser, `#!${process.execPath}
+import { appendFileSync } from "node:fs";
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + "\\n");
+process.exit(args.includes("record") && args.includes("start") && args.includes("test-a") ? 1 : 0);
+`);
+      await chmod(browser, 0o755);
+      const ffmpeg = join(dir, "ffmpeg");
+      await writeFile(ffmpeg, "#!/bin/sh\nexit 1\n");
+      await chmod(ffmpeg, 0o755);
+      const paths = ["a", "b"].map((name) => join(dir, `${name}.json`));
+      for (const [i, name] of ["a", "b"].entries()) {
+        await writeFile(paths[i]!, JSON.stringify({
+          ...scenario(name, join(dir, `${name}.mp4`)),
+          ...(name === "a" && failingSource === "file" ? { source: { type: "file", path: join(dir, "missing.mp4") } } : { steps: [{ action: "press", key: "Enter" }] }),
+        }));
+      }
+      const composition = join(dir, "c.json");
+      await writeFile(composition, JSON.stringify({ name: "c", scenarios: paths, scenes: [{ layout: "side-by-side", streams: [{ scenario: "a" }, { scenario: "b" }] }], output: { path: join(dir, "c.mp4") } }));
+      const result = await run(process.execPath, [cli, "run", composition, "--session-name", "test"], { env: { ...process.env, PATH: `${dir}:${process.env.PATH}` } as Record<string, string> });
+      expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, code: "CAPTURE_PARTIAL_FAILED" });
+      const calls = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+      expect(calls.some((args) => args.includes("press"))).toBe(false);
+      expect(calls.some((args) => args.includes("close"))).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}

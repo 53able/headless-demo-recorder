@@ -48,10 +48,11 @@ test("barrier counts a leaver as arrived", async () => {
   await Promise.all([b.arrive(), b.arrive()]);
 });
 
-test("barrier resolves on timeout", async () => {
-  const t = Date.now();
-  await barrier(2, 50).arrive();
-  expect(Date.now() - t).toBeGreaterThanOrEqual(40);
+test("barrier timeout rejects waiting and later parties", async () => {
+  const b = barrier(3, 50);
+  const results = await Promise.allSettled([b.arrive(), b.arrive()]);
+  expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+  await expect(b.arrive()).rejects.toThrow("barrier timed out");
 });
 
 test("toMp4Args puts -ss before -i only when startMs > 0", () => {

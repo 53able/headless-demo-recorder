@@ -172,8 +172,7 @@ export function barrier(n: number, timeoutMs: number): { arrive(): Promise<void>
           reject(abortSignal.reason);
         };
         const timer = setTimeout(() => {
-          log(`warning: barrier timed out after ${timeoutMs}ms; continuing without all parties`);
-          done();
+          this.fail(new Error(`barrier timed out after ${timeoutMs}ms`));
         }, timeoutMs);
         abortSignal.addEventListener("abort", onAbort, { once: true });
         waiters.push({ resolve: done, reject: (e) => (settle(), reject(e)) });

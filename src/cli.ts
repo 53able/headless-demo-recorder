@@ -231,7 +231,7 @@ async function assertCompositeDir(compProj: string, stage: "validate" | "render"
   }
 }
 
-/** Record every referenced scenario at once; recording starts together at the barrier. */
+/** Prepare recordings concurrently; all must be ready before scenario steps start. */
 async function captureAll(scenarios: Scenario[], f: Flags, compositionArg: string, retryRender: string): Promise<{ projectDirs: string[]; startSkewMs: number; warnings: string[] }> {
   const projectDirs = scenarios.map(projectDirFor);
   // Check all before launching anything: a half-started parallel capture is the costly failure.
@@ -249,8 +249,8 @@ async function captureAll(scenarios: Scenario[], f: Flags, compositionArg: strin
     try {
       return await doCapture(s, f, { sessionName: `${base}-${s.name}`, runId, ready: () => ((arrived = true), gate.arrive()) });
     } catch (e) {
-      // Failed before recording: stop the others at the barrier rather than let them act alone.
-      if (!arrived && s.source.type !== "file") gate.fail(new Error(`${s.name} failed before recording started`));
+      // Preparation failed: stop peers before their scenario steps.
+      if (!arrived) gate.fail(new Error(`${s.name} failed before recording started`));
       throw e;
     } finally {
       if (!arrived) gate.leave(); // a file source never waits at the barrier

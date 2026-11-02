@@ -10,7 +10,7 @@ export type BrowserOptions = {
   allowOrigins?: string[];
   /** agent-browser session name chosen by the caller, so it can close the session itself. */
   sessionName?: string;
-  /** Awaited right before recording starts (e.g. a barrier shared with parallel captures). */
+  /** Awaited after recording starts, before any scenario steps. */
   ready?: () => Promise<void>;
 };
 
@@ -59,9 +59,9 @@ export async function captureBrowser(src: BrowserSource, steps: Step[], workDir:
     await ab("set", "viewport", String(vw), String(vh));
     await ab("open", src.url);
     await ab("wait", "--load", "networkidle").catch(() => undefined);
-    await opts.ready?.();
     await ab("record", "start", webm, src.url);
     t0 = Date.now();
+    await opts.ready?.();
     await ab("wait", "--load", "networkidle").catch(() => undefined);
     await sleep(600);
 
