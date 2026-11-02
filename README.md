@@ -49,7 +49,34 @@ bun src/cli.ts doctor                                   # ツールと権限を�
 bun src/cli.ts check scenarios/browser-wikipedia.json   # 検証のみ。何も起動しない
 bun src/cli.ts run scenarios/browser-wikipedia.json     # capture → render → inspect
 bun src/cli.ts render out/wikipedia-search.project --edit edit.json --out out/v2.mp4   # 再録画せずに再編集
+bun src/cli.ts run scenarios/composition-calc-wiki.json --allow-app com.apple.calculator --allow-origin https://en.wikipedia.org   # 2本を同時に録画して1本に
 ```
+
+### 複数の録画を同時に行い、1本に結合する（composition）
+
+構成ファイルは既存のシナリオを参照し、どれを同時に録るか、どう並べるかだけを持つ。参照先の `Scenario` は変えない。
+
+```json
+{
+  "name": "calc-wiki",
+  "scenarios": ["scenarios/desktop-calculator.json", "scenarios/browser-wikipedia.json"],
+  "scenes": [
+    { "layout": "side-by-side", "streams": [{ "scenario": "calculator" }, { "scenario": "wikipedia-search" }] },
+    { "layout": "single", "streams": [{ "scenario": "wikipedia-search" }] }
+  ],
+  "edit": { "titles": [{ "text": "2つの録画を1本に", "startMs": 0, "endMs": 1500 }] },
+  "output": { "path": "out/calc-wiki.mp4", "quality": "good" }
+}
+```
+
+- `scenarios` は 1〜2 本。参照先は同時に録画を開始する（開始時刻の差は結果 JSON の `startSkewMs`。実測 100〜400ms）。各録画は独立に進み、ステップ単位の待ち合わせはしない。
+- `scenes` は順に再生される。`single` は1本を全面に、`side-by-side` は2本を左右に並べる。各 stream は `startMs` / `endMs`（揃えた後の録画上の時刻）で区間を切れる。
+- 出力フレームは `size`（既定 1920x1080）。録画はセルに収まるよう縦横比を保って拡縮し、余白は暗色で埋める。
+- ズーム・字幕・合成カーソルは各録画から引き継ぐ。ズームの設定と字幕の大きさは参照先の `scenario.edit` が既定値で、`composition.edit` の同名キーで上書きする。`titles` と `style` は composition のみ。`trim`・`idleSpeedupMs`・`speechCaptions`・plan レベルの `redact` は composition では使えない。
+- ズームは出力全体に1つしか掛からない。左右並べで2本のズームの時刻が重なったときは、先に始まった方を採用し、後の方は捨てる。片方のセルにズームしている間、もう片方のセルはほぼ画面外に出る。
+- 結果 JSON は単一シナリオと同じ形に `projectDirs`（参照先の project）と `startSkewMs` が加わる。合成後の project（`out/<name>.project/`）の `events.json` は派生物で、`render` のたびに上書きされる。手で直すのは参照先の `events.json`。
+- 直すときは `render out/calc-wiki.project --composition scenarios/composition-calc-wiki.json --force`。参照先の録画はそのまま使う。
+- 片方の録画だけ失敗すると `CAPTURE_PARTIAL_FAILED`（`retry: no`）を返し、成功した録画は残す。失敗したシナリオを単体で `capture --force` し直してから、上の `render` で結合する。
 
 `capture` は書き出しより先に、`out/<name>.project/` へ次の3つを保存する。
 
@@ -110,6 +137,7 @@ kill %1
 - ブラウザ録画では、実時間を動画の長さに合わせて伸縮させ、操作の時刻を動画上へ対応付けている。ページの読み込みが止まると、ズームが ±200ms ほどずれることがある。
 - デスクトップ録画は1つのウィンドウしか録らない。別ウィンドウで開くダイアログ内の操作は、座標を正しく対応付けられない。
 - Whisper による字幕（`speechCaptions`）は、録画に音声が入っている場合しか使えない。ブラウザ録画には音声がない。
-- 録画は1件ずつしか実行できない。並列セッションには未対応。
+- 1プロセスで同時に録画できるのは composition の2本まで。別プロセスの `run` の同時実行や、同じシナリオを参照する2つの composition の同時実行は、ロックが無いため project dir を壊しうる。
+- desktop の録画は同時に2本録れる（`openscreen record --window` はウィンドウ単位で、重なっていても個別に録れる）。ヘッドレスの `fill` / `press` はアクセシビリティ API で対象要素に直接届くため、もう一方のアプリの操作や前面化で文字が欠けることはなかった（2026-11 実測: TextEdit への入力と計算機のクリック・前面化を同時に各3回、欠落なし。`.omc/research/ac3-desktop-typing.md`）。
 - agent-browser（0.41.1 で確認）は `--allowed-domains` の指定時に `window.WebSocket` を差し替えるが、`WebSocket.OPEN` などの定数を引き継がない。`readyState === WebSocket.OPEN` を確かめてから送信するページ（ttyd など）は、何も送信できなくなる。`--allow-origin` を指定したときは、`src/capture/ws-constants.js` を初期化スクリプトとして差し込んで定数を補う。
 - 書き出しでは OpenScreen が余白と背景を付けるため、出力の解像度とフレームレートは入力と一致しない（例: 1280x720・30fps → 1784x1080・60fps）。

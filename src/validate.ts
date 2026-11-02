@@ -1,6 +1,6 @@
 // Static scenario checks that run before anything is launched or recorded.
 
-import type { Scenario, Step } from "./types.ts";
+import type { Composition, CompositionEdit, Scenario, Step } from "./types.ts";
 
 export type Issue = { path: string; level: "error" | "warning"; message: string };
 
@@ -128,5 +128,62 @@ export function validateEvents(raw: unknown, at = "events"): Issue[] {
     for (const k of ["zoom", "redact"] as const) if (e[k] !== undefined && typeof e[k] !== "boolean") err(`${p}.${k}`, "must be true or false");
     if (e.redact === true && e.rect === undefined) warn(`${p}.redact`, "has no effect without rect");
   });
+  return issues;
+}
+
+/** A composition is any object with a `scenes` array; everything else is treated as a scenario. */
+export const isComposition = (raw: unknown): boolean => Array.isArray((raw as { scenes?: unknown } | null)?.scenes);
+
+const COMPOSITION_EDIT_KEYS: (keyof CompositionEdit)[] = ["zoom", "syntheticCursor", "stepCaptions", "captionFontSize", "titleFontSize", "titles", "style"];
+const STREAMS_PER_LAYOUT: Record<string, number> = { single: 1, "side-by-side": 2 };
+
+/** `scenarioNames[i]` is the name read from `scenarios[i]` (undefined if it could not be read). */
+export function validateComposition(raw: unknown, scenarioNames: (string | undefined)[]): Issue[] {
+  const issues: Issue[] = [];
+  const err = (path: string, message: string) => issues.push({ path, level: "error", message });
+  if (!raw || typeof raw !== "object") return [{ path: "$", level: "error", message: "composition must be a JSON object" }];
+  const c = raw as Partial<Composition>;
+
+  if (!c.name || !/^[\w.-]+$/.test(c.name)) err("name", "required, [A-Za-z0-9_.-]+");
+  if (!c.output?.path) err("output.path", "required (.mp4 or .gif)");
+  else if (!/\.(mp4|gif)$/i.test(c.output.path)) err("output.path", "must end with .mp4 or .gif");
+
+  if (!Array.isArray(c.scenarios) || c.scenarios.length < 1 || c.scenarios.length > 2) err("scenarios", "must list 1 or 2 scenario JSON paths");
+  else
+    c.scenarios.forEach((p, i) => {
+      if (typeof p !== "string" || !p) return err(`scenarios[${i}]`, "must be a scenario JSON path");
+      if (c.scenarios!.indexOf(p) < i) err(`scenarios[${i}]`, `duplicate path "${p}"`);
+      const n = scenarioNames[i];
+      if (!n) err(`scenarios[${i}]`, "the referenced scenario has no name (or could not be read)");
+      else if (scenarioNames.indexOf(n) < i) err(`scenarios[${i}]`, `scenario name "${n}" is used by scenarios[${scenarioNames.indexOf(n)}] too; names must be unique`);
+    });
+
+  const known = new Set(scenarioNames.filter(Boolean));
+  if (!Array.isArray(c.scenes) || c.scenes.length === 0) err("scenes", "must be a non-empty array");
+  else
+    c.scenes.forEach((sc, i) => {
+      const p = `scenes[${i}]`;
+      const want = STREAMS_PER_LAYOUT[sc?.layout as string];
+      if (!want) return err(`${p}.layout`, "must be single | side-by-side");
+      if (!Array.isArray(sc.streams) || sc.streams.length !== want) return err(`${p}.streams`, `${sc.layout} needs exactly ${want} stream${want > 1 ? "s" : ""}`);
+      sc.streams.forEach((st, j) => {
+        const q = `${p}.streams[${j}]`;
+        if (typeof st?.scenario !== "string" || !known.has(st.scenario)) err(`${q}.scenario`, `must be the name of a listed scenario (${[...known].join(", ") || "none"})`);
+        for (const k of ["startMs", "endMs"] as const) if (st?.[k] !== undefined && !(num(st[k]) && st[k] >= 0)) err(`${q}.${k}`, "must be a number >= 0");
+        if (num(st?.startMs) && num(st?.endMs) && st.startMs >= st.endMs) err(q, "startMs must be less than endMs");
+      });
+    });
+
+  if (c.size !== undefined) {
+    const [w, h] = Array.isArray(c.size) ? c.size : [];
+    if (!Array.isArray(c.size) || c.size.length !== 2 || !Number.isInteger(w) || !Number.isInteger(h) || w! <= 0 || h! <= 0) err("size", "must be [width, height] in positive integers");
+    else if (w! % 4 || h! % 2) err("size", "width must be a multiple of 4 and height a multiple of 2");
+  }
+  if (c.edit !== undefined) {
+    if (!c.edit || typeof c.edit !== "object") err("edit", "must be an object");
+    else
+      for (const k of Object.keys(c.edit))
+        if (!COMPOSITION_EDIT_KEYS.includes(k as keyof CompositionEdit)) err(`edit.${k}`, `not supported in a composition (allowed: ${COMPOSITION_EDIT_KEYS.join(", ")})`);
+  }
   return issues;
 }

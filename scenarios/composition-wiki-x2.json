@@ -1,0 +1,8 @@
+{
+  "name": "wiki-x2",
+  "scenarios": ["scenarios/browser-wikipedia.json", "scenarios/browser-wikipedia-ja.json"],
+  "scenes": [
+    { "layout": "side-by-side", "streams": [{ "scenario": "wikipedia-search" }, { "scenario": "wikipedia-search-ja" }] }
+  ],
+  "output": { "path": "out/wiki-x2.mp4", "quality": "good" }
+}

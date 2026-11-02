@@ -63,6 +63,17 @@
 
 書き出した動画は OpenScreen が余白と背景を付けるため、解像度とフレームレートが入力と一致しない（例: 1280x720・30fps の入力から 1784x1080・60fps の出力）。サイズが重要なら `ffprobe` で出力を確かめる。
 
+## 複数の録画を同時に行い、1本に結合する（composition）
+
+既存のシナリオを 1〜2 本参照する構成ファイル（スキーマは `src/types.ts` の `Composition`、例は `scenarios/composition-calc-wiki.json`）を書き、`check` → `run` → `inspect` は単一シナリオと同じ手順で行う。
+
+- 参照先のシナリオは先に単体で `check` を通し、下見を済ませておく。`check <composition>` は参照先の検証も含めて1つの JSON で返す。
+- `--allow-origin` / `--allow-app` は参照先すべてに掛かる。desktop を2本録るなら両方のアプリを列挙する。
+- 参照先は同時に録画を開始し、あとは独立に進む。ステップ単位の待ち合わせ（A の操作を B が待つ）はできない。
+- `inspectSheet` では、各場面の切り替わり（`events.json` の `scene N:` の mark）と、左右それぞれのセルに字幕とカーソルが出ていることを確かめる。
+- 修正は参照先の `events.json` か composition の `scenes` / `edit` を直し、`render <compProj> --composition <file> --force` で結合だけをやり直す。
+- `CAPTURE_PARTIAL_FAILED`（`retry: no`）のときは、失敗したシナリオのアプリの状態を戻し、そのシナリオだけ `capture --force` してから、上の `render` で結合する。
+
 ## 失敗時の対応: まず `retry` を読む
 
 Codex で `doctor` の権限項目が `Operation not permitted`、または `render` が空のメッセージの `PROJECT_INVALID` になったら、まずサンドボックス内で実行していないかを疑う（前提の節を参照）。

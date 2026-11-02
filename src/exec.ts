@@ -126,12 +126,52 @@ export async function ffprobe(path: string): Promise<Probe> {
   };
 }
 
-/** Normalize any input video to constant-frame-rate H.264 MP4 that OpenScreen can decode. */
-export async function toMp4(input: string, output: string): Promise<void> {
-  await runOk("ffmpeg", [
-    "-y", "-v", "error", "-i", input,
+/** ffmpeg argv for `toMp4`. `startMs > 0` drops that much from the head (`-ss` before `-i`). */
+export function toMp4Args(input: string, output: string, opts: { startMs?: number } = {}): string[] {
+  return [
+    "-y", "-v", "error", ...(opts.startMs && opts.startMs > 0 ? ["-ss", String(opts.startMs / 1000)] : []), "-i", input,
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
     "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-r", "30",
     "-c:a", "aac", "-movflags", "+faststart", output,
-  ]);
+  ];
+}
+
+/** Normalize any input video to constant-frame-rate H.264 MP4 that OpenScreen can decode. */
+export async function toMp4(input: string, output: string, opts: { startMs?: number } = {}): Promise<void> {
+  await runOk("ffmpeg", toMp4Args(input, output, opts));
+}
+
+/** Rendezvous for `n` parallel captures. `leave()` counts a party that will never arrive.
+ * Releases on timeout too (with a warning) so one stuck capture cannot hang the others. */
+export function barrier(n: number, timeoutMs: number): { arrive(): Promise<void>; leave(): void } {
+  let count = 0;
+  const waiters: (() => void)[] = [];
+  const release = () => waiters.splice(0).forEach((w) => w());
+  const bump = () => {
+    if (++count >= n) release();
+  };
+  return {
+    arrive() {
+      if (abortSignal.aborted) return Promise.reject(abortSignal.reason);
+      return new Promise<void>((resolve, reject) => {
+        const done = () => {
+          clearTimeout(timer);
+          abortSignal.removeEventListener("abort", onAbort);
+          resolve();
+        };
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(abortSignal.reason);
+        };
+        const timer = setTimeout(() => {
+          log(`warning: barrier timed out after ${timeoutMs}ms; continuing without all parties`);
+          done();
+        }, timeoutMs);
+        abortSignal.addEventListener("abort", onAbort, { once: true });
+        waiters.push(done);
+        bump();
+      });
+    },
+    leave: bump,
+  };
 }

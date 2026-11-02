@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { childEnv, run, spawnEnv } from "./exec.ts";
+import { barrier, childEnv, run, spawnEnv, toMp4Args } from "./exec.ts";
 
 test("run never passes ELECTRON_RUN_AS_NODE to a child", async () => {
   process.env.ELECTRON_RUN_AS_NODE = "1";
@@ -30,4 +30,35 @@ test("child env is allowlisted and drops AGENT_BROWSER_*", async () => {
     delete process.env.AGENT_BROWSER_ALLOWED_DOMAINS;
     delete process.env.SOME_SECRET;
   }
+});
+
+test("barrier resolves when all parties arrive", async () => {
+  const b = barrier(2, 5_000);
+  let released = false;
+  const a = b.arrive().then(() => (released = true));
+  await Promise.resolve();
+  expect(released).toBe(false);
+  await Promise.all([a, b.arrive()]);
+  expect(released).toBe(true);
+});
+
+test("barrier counts a leaver as arrived", async () => {
+  const b = barrier(3, 5_000);
+  b.leave();
+  await Promise.all([b.arrive(), b.arrive()]);
+});
+
+test("barrier resolves on timeout", async () => {
+  const t = Date.now();
+  await barrier(2, 50).arrive();
+  expect(Date.now() - t).toBeGreaterThanOrEqual(40);
+});
+
+test("toMp4Args puts -ss before -i only when startMs > 0", () => {
+  const plain = toMp4Args("in.webm", "out.mp4");
+  expect(plain).not.toContain("-ss");
+  expect(toMp4Args("in.webm", "out.mp4", { startMs: 0 })).toEqual(plain);
+  const trimmed = toMp4Args("in.webm", "out.mp4", { startMs: 1500 });
+  expect(trimmed[trimmed.indexOf("-ss") + 1]).toBe("1.5");
+  expect(trimmed.indexOf("-ss")).toBeLessThan(trimmed.indexOf("-i"));
 });

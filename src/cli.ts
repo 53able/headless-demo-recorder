@@ -5,13 +5,14 @@ import { captureBrowser } from "./capture/browser.ts";
 import { captureDesktop } from "./capture/desktop.ts";
 import { captureFile } from "./capture/file.ts";
 import { compileEditor } from "./compile.ts";
+import { buildComposite, composeEditor, DEFAULT_SIZE } from "./compose.ts";
 import { doctor } from "./doctor.ts";
 import { ToolError, asToolError } from "./errors.ts";
-import { log, requestAbort } from "./exec.ts";
+import { barrier, log, requestAbort } from "./exec.ts";
 import { inspect } from "./inspect.ts";
 import { render } from "./render.ts";
-import type { CaptureResult, EditPlan, Output, Scenario } from "./types.ts";
-import { type Issue, normalizeOrigin, validateEvents, validateScenario } from "./validate.ts";
+import type { CaptureResult, Composition, EditPlan, Output, Scenario } from "./types.ts";
+import { type Issue, isComposition, normalizeOrigin, validateComposition, validateEvents, validateScenario } from "./validate.ts";
 
 const USAGE = `headless capture → edit → export
 
@@ -25,6 +26,8 @@ const USAGE = `headless capture → edit → export
   plan    <project-dir> [--edit edit.json]
                                   R0  print the editor regions that render would write
   run     <scenario.json>         check → capture → render → inspect
+  (check/run take a composition.json too: its scenarios are recorded in parallel and joined;
+   render/plan <composition-project> [--composition c.json] re-join and re-export without recording)
 
 Flags: --force (overwrite an existing capture/output), --keep-work (keep raw capture files)
 Guards (check/capture/run):
@@ -84,7 +87,7 @@ const readJson = async <T>(path: string, stage: "validate" | "render"): Promise<
   }
 };
 const exists = (p: string) => access(p).then(() => true, () => false);
-const projectDirFor = (s: Scenario) => {
+const projectDirFor = (s: { output: Output }) => {
   const out = resolve(s.output.path);
   return join(dirname(out), `${basename(out).replace(/\.[^.]+$/, "")}.project`);
 };
@@ -99,7 +102,55 @@ async function loadScenario(path: string, f: Flags): Promise<{ scenario: Scenari
   return { scenario: raw as Scenario, warnings: issues.filter((i) => i.level === "warning").map((i) => `${i.path}: ${i.message}`) };
 }
 
-async function doCapture(scenario: Scenario, f: Flags): Promise<{ projDir: string; capture: CaptureResult }> {
+/** Composition issues plus each referenced scenario's issues (prefixed `scenarios[i](<path>).`).
+ * A referenced file that cannot be read becomes an issue, never a throw. */
+async function compositionIssues(raw: unknown, f: Flags): Promise<{ issues: Issue[]; scenarios: Scenario[] }> {
+  const paths: unknown[] = Array.isArray((raw as Partial<Composition>).scenarios) ? (raw as Composition).scenarios : [];
+  const issues: Issue[] = [];
+  const scenarios: (Scenario | undefined)[] = [];
+  for (const [i, p] of paths.entries()) {
+    if (typeof p !== "string" || !p) {
+      scenarios.push(undefined);
+      continue;
+    }
+    let s: unknown;
+    try {
+      s = await readJson<unknown>(p, "validate");
+    } catch (e) {
+      issues.push({ path: `scenarios[${i}]`, level: "error", message: (e as Error).message });
+      scenarios.push(undefined);
+      continue;
+    }
+    issues.push(...(await scenarioIssues(s, f)).map((x) => ({ ...x, path: `scenarios[${i}](${p}).${x.path}` })));
+    scenarios.push(s as Scenario);
+  }
+  const names = scenarios.map((s) => (typeof s?.name === "string" ? s.name : undefined));
+  issues.push(...validateComposition(raw, names));
+  // Project dirs hold the recordings: two scenarios (or the composite) sharing one would overwrite a capture.
+  const dirs = scenarios.map((s) => (typeof s?.output?.path === "string" ? projectDirFor(s) : undefined));
+  dirs.forEach((d, i) => {
+    if (d && dirs.indexOf(d) < i) issues.push({ path: `scenarios[${i}]`, level: "error", message: `output.path gives the same project dir as scenarios[${dirs.indexOf(d)}] (${d}); change one output.path` });
+  });
+  const c = raw as Partial<Composition>;
+  if (typeof c.output?.path === "string") {
+    const own = projectDirFor(c as Composition);
+    const j = dirs.indexOf(own);
+    if (j >= 0) issues.push({ path: "output.path", level: "error", message: `gives the same project dir as scenarios[${j}] (${own}); change one output.path` });
+  }
+  return { issues, scenarios: scenarios as Scenario[] };
+}
+
+async function loadComposition(path: string, f: Flags): Promise<{ comp: Composition; scenarios: Scenario[]; warnings: string[] }> {
+  const raw = await readJson<unknown>(path, "validate");
+  const { issues, scenarios } = await compositionIssues(raw, f);
+  const errors = issues.filter((i) => i.level === "error");
+  if (errors.length) {
+    throw new ToolError("validate", "INVALID_COMPOSITION", errors.map((i) => `${i.path}: ${i.message}`).join("\n"), "after-fix", "fix the listed fields; nothing was launched");
+  }
+  return { comp: raw as Composition, scenarios, warnings: issues.filter((i) => i.level === "warning").map((i) => `${i.path}: ${i.message}`) };
+}
+
+async function doCapture(scenario: Scenario, f: Flags, extra: { sessionName?: string; ready?: () => Promise<void> } = {}): Promise<{ projDir: string; capture: CaptureResult }> {
   const projDir = projectDirFor(scenario);
   if ((await exists(join(projDir, "capture.json"))) && !f.force) {
     throw new ToolError("capture", "CAPTURE_EXISTS", `${projDir} already has a capture`, "after-fix", `re-edit it with: render ${projDir} --scenario <file> (or pass --force to record again)`);
@@ -111,8 +162,8 @@ async function doCapture(scenario: Scenario, f: Flags): Promise<{ projDir: strin
   let capture: CaptureResult;
   try {
     switch (scenario.source.type) {
-      case "browser": capture = await captureBrowser(scenario.source, steps, work, { allowOrigins: f.allowOrigins, sessionName: f.opts["session-name"] }); break;
-      case "desktop": capture = await captureDesktop(scenario.source, steps, work, { allowApps: f.allowApps }); break;
+      case "browser": capture = await captureBrowser(scenario.source, steps, work, { allowOrigins: f.allowOrigins, sessionName: extra.sessionName ?? f.opts["session-name"], ready: extra.ready }); break;
+      case "desktop": capture = await captureDesktop(scenario.source, steps, work, { allowApps: f.allowApps, ready: extra.ready }); break;
       case "file": capture = await captureFile(scenario.source, work); break;
     }
   } catch (e) {
@@ -151,6 +202,69 @@ async function editInputs(f: Flags, projDir: string): Promise<{ name: string; pl
   return { name, plan, output: { ...(sc?.output ?? {}), path: outPath } };
 }
 
+/** Record every referenced scenario at once; recording starts together at the barrier. */
+async function captureAll(scenarios: Scenario[], f: Flags, retryRender: string): Promise<{ projectDirs: string[]; startSkewMs: number }> {
+  const projectDirs = scenarios.map(projectDirFor);
+  // Check all before launching anything: a half-started parallel capture is the costly failure.
+  if (!f.force) {
+    for (const d of projectDirs) {
+      if (await exists(join(d, "capture.json"))) throw new ToolError("capture", "CAPTURE_EXISTS", `${d} already has a capture`, "after-fix", `re-join without recording: ${retryRender} (or pass --force to record again)`);
+    }
+  }
+  const base = f.opts["session-name"] ?? `headless-demo-recorder-${process.pid}-${Date.now()}`;
+  const gate = barrier(scenarios.length, 120_000);
+  // allSettled, not all: an early reject would let main exit before the others clean up.
+  const settled = await Promise.allSettled(scenarios.map(async (s) => {
+    let arrived = false;
+    try {
+      return await doCapture(s, f, { sessionName: `${base}-${s.name}`, ready: () => ((arrived = true), gate.arrive()) });
+    } finally {
+      if (!arrived) gate.leave(); // failed before the barrier, or a file source that never waits
+    }
+  }));
+  const failed = settled.flatMap((r, i) => (r.status === "rejected" ? [{ name: scenarios[i]!.name, error: asToolError(r.reason, "capture") }] : []));
+  if (failed.length) {
+    throw new ToolError("capture", "CAPTURE_PARTIAL_FAILED", failed.map((x) => `${x.name}: [${x.error.code}] ${x.error.message}`).join("\n"), "no",
+      `the other recordings are kept. Reset the app state, then capture the failed scenario(s) with --force, then: ${retryRender}`,
+      { failed: failed.map((x) => x.name).join(","), projectDirs: projectDirs.join(",") });
+  }
+  const t0s = settled.map((r) => (r.status === "fulfilled" ? r.value.capture.t0EpochMs : undefined));
+  const startSkewMs = t0s.every((t) => t !== undefined) ? Math.max(...(t0s as number[])) - Math.min(...(t0s as number[])) : 0;
+  return { projectDirs, startSkewMs };
+}
+
+/** Join the referenced captures into `<compProj>/capture.mp4` and export it. Never records. */
+async function renderComposition(compProj: string, comp: Composition, compPath: string, scenarios: Scenario[], f: Flags) {
+  const outPath = resolve(comp.output.path);
+  if (!f.force && (await exists(outPath))) throw new ToolError("render", "OUTPUT_EXISTS", `${outPath} already exists`, "after-fix", "pass --force to overwrite, or change output.path");
+  const captures: Record<string, CaptureResult> = {};
+  for (const s of scenarios) captures[s.name] = await loadProject(projectDirFor(s));
+  const { patch, events, scenes } = composeEditor(comp, captures, Object.fromEntries(scenarios.map((s) => [s.name, s.edit])));
+  await mkdir(compProj, { recursive: true });
+  const video = join(compProj, "capture.mp4");
+  const probe = await buildComposite(scenes, captures, comp.size ?? DEFAULT_SIZE, video);
+  const capture: CaptureResult = { videoPath: video, ...probe, events, realCursor: false };
+  await writeFile(join(compProj, "capture.json"), JSON.stringify(capture, null, 2));
+  // Derived each render; edit the referenced projects' events.json instead.
+  await writeFile(join(compProj, "events.json"), JSON.stringify(events, null, 2));
+  await writeFile(join(compProj, "composition.json"), JSON.stringify({ source: resolve(compPath), composition: comp }, null, 2));
+  return render(compProj, comp.name, capture, { ...comp.edit } as EditPlan, comp.output, { force: f.force, patch });
+}
+
+/** `--composition`, else the source recorded in `<projDir>/composition.json`; undefined for a single-scenario project. */
+async function compositionFor(projDir: string, f: Flags): Promise<string | undefined> {
+  if (f.opts.composition) return f.opts.composition;
+  const rec = join(projDir, "composition.json");
+  return (await exists(rec)) ? (await readJson<{ source: string }>(rec, "render")).source : undefined;
+}
+
+async function loadCompositionFor(projDir: string, path: string, f: Flags) {
+  const loaded = await loadComposition(path, f);
+  const own = projectDirFor(loaded.comp);
+  if (own !== projDir) throw new ToolError("validate", "BAD_ARGS", `${projDir} is not the project dir of ${path} (${own})`, "after-fix", `pass ${own}`);
+  return loaded;
+}
+
 async function main(argv: string[]): Promise<unknown> {
   const [cmd, ...rest] = argv;
   const f = parseArgs(rest);
@@ -163,7 +277,7 @@ async function main(argv: string[]): Promise<unknown> {
     case "check": {
       if (!arg) break;
       const raw = await readJson<unknown>(arg, "validate");
-      const issues = await scenarioIssues(raw, f);
+      const issues = isComposition(raw) ? (await compositionIssues(raw, f)).issues : await scenarioIssues(raw, f);
       return { ok: !issues.some((i) => i.level === "error"), issues };
     }
     case "capture": {
@@ -174,6 +288,15 @@ async function main(argv: string[]): Promise<unknown> {
     }
     case "plan": {
       if (!arg) break;
+      const compPath = await compositionFor(resolve(arg), f);
+      if (compPath) {
+        // R0: no ffmpeg, no writes. Lengths come from the referenced captures.
+        const { comp, scenarios } = await loadCompositionFor(resolve(arg), compPath, f);
+        const captures: Record<string, CaptureResult> = {};
+        for (const s of scenarios) captures[s.name] = await loadProject(projectDirFor(s));
+        const { patch, scenes } = composeEditor(comp, captures, Object.fromEntries(scenarios.map((s) => [s.name, s.edit])));
+        return { ok: true, stage: "compile", durationMs: scenes.reduce((n, s) => n + s.lengthMs, 0), regions: patch };
+      }
       const capture = await loadProject(arg);
       const { plan } = await editInputs(f, resolve(arg));
       return { ok: true, stage: "compile", regions: compileEditor(capture, plan) };
@@ -181,6 +304,12 @@ async function main(argv: string[]): Promise<unknown> {
     case "render": {
       if (!arg) break;
       const projDir = resolve(arg);
+      const compPath = await compositionFor(projDir, f);
+      if (compPath) {
+        const { comp, scenarios } = await loadCompositionFor(projDir, compPath, f);
+        const result = await renderComposition(projDir, comp, compPath, scenarios, f);
+        return { ok: true, stage: "render", ...result, next: [`inspect ${projDir} --video ${result.outputPath}`] };
+      }
       const capture = await loadProject(projDir);
       const { name, plan, output } = await editInputs(f, projDir);
       const result = await render(projDir, name, capture, plan, output, { force: f.force });
@@ -194,6 +323,27 @@ async function main(argv: string[]): Promise<unknown> {
     }
     case "run": {
       if (!arg) break;
+      if (isComposition(await readJson<unknown>(arg, "validate"))) {
+        const { comp, scenarios, warnings } = await loadComposition(arg, f);
+        if (!f.force && (await exists(resolve(comp.output.path)))) {
+          throw new ToolError("validate", "OUTPUT_EXISTS", `${resolve(comp.output.path)} already exists`, "after-fix", "pass --force or change output.path; nothing was launched");
+        }
+        const compProj = projectDirFor(comp);
+        const rerender = `render ${compProj} --composition ${arg} --force`;
+        const { projectDirs, startSkewMs } = await captureAll(scenarios, f, rerender);
+        let result;
+        try {
+          result = await renderComposition(compProj, comp, arg, scenarios, f);
+        } catch (e) {
+          // The recordings are saved; only joining and exporting need to be repeated.
+          throw asToolError(e, "render", { projectDir: compProj, retryWith: rerender });
+        }
+        const evidence = await inspect(compProj, result.outputPath);
+        return {
+          ok: true, stage: "done", ...result, projectDir: compProj, warnings, inspectSheet: evidence.sheet, projectDirs, startSkewMs,
+          next: [`view ${evidence.sheet} and confirm each tile shows the acted element`, `${rerender}  (after editing a referenced events.json or the composition)`],
+        };
+      }
       const { scenario, warnings } = await loadScenario(arg, f);
       // Fail before recording, not after: a wasted capture costs time and repeats app side effects.
       if (!f.force && (await exists(resolve(scenario.output.path)))) {

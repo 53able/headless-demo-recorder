@@ -1,0 +1,56 @@
+{
+  "name": "wikipedia-search-ja",
+  "source": {
+    "type": "browser",
+    "url": "https://ja.wikipedia.org/wiki/メインページ",
+    "viewport": [
+      1280,
+      800
+    ]
+  },
+  "steps": [
+    {
+      "action": "mark",
+      "caption": "日本語版 Wikipedia を開く",
+      "waitMs": 1200
+    },
+    {
+      "action": "fill",
+      "target": "#searchInput",
+      "value": "画面録画",
+      "caption": "検索ボックスにキーワードを入力",
+      "waitMs": 1200
+    },
+    {
+      "action": "press",
+      "key": "Enter",
+      "caption": "検索を実行",
+      "waitMs": 2500
+    },
+    {
+      "action": "scroll",
+      "direction": "down",
+      "px": 600,
+      "caption": "記事をスクロール",
+      "waitMs": 1500
+    }
+  ],
+  "edit": {
+    "zoom": {
+      "depth": 3,
+      "leadMs": 500,
+      "holdMs": 1800
+    },
+    "titles": [
+      {
+        "text": "headless-demo-recorder demo (ja)",
+        "startMs": 0,
+        "endMs": 1200
+      }
+    ]
+  },
+  "output": {
+    "path": "out/wikipedia-search-ja.mp4",
+    "quality": "good"
+  }
+}

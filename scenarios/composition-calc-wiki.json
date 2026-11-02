@@ -1,0 +1,12 @@
+{
+  "name": "calc-wiki",
+  "scenarios": ["scenarios/desktop-calculator.json", "scenarios/browser-wikipedia.json"],
+  "scenes": [
+    { "layout": "side-by-side", "streams": [{ "scenario": "calculator" }, { "scenario": "wikipedia-search" }] },
+    { "layout": "single", "streams": [{ "scenario": "wikipedia-search" }] }
+  ],
+  "edit": {
+    "titles": [{ "text": "2つの録画を1本に", "startMs": 0, "endMs": 1500 }]
+  },
+  "output": { "path": "out/calc-wiki.mp4", "quality": "good" }
+}

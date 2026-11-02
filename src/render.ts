@@ -1,6 +1,6 @@
 import { access, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { compileEditor, synthesizeCursor } from "./compile.ts";
+import { compileEditor, synthesizeCursor, type EditorPatch } from "./compile.ts";
 import { ffprobe, log, parseNdjson, run } from "./exec.ts";
 import { ToolError } from "./errors.ts";
 import type { CaptureResult, EditPlan, Output } from "./types.ts";
@@ -50,14 +50,14 @@ export async function syncCursorSidecar(capture: CaptureResult, plan: EditPlan):
 
 /** Compile edits into a .openscreen project next to the captured media and export it.
  * Re-runnable: it only reads capture.mp4/events and rewrites the project + output. */
-export async function render(projDir: string, name: string, capture: CaptureResult, plan: EditPlan, output: Output, opts: { force?: boolean } = {}): Promise<RenderResult> {
+export async function render(projDir: string, name: string, capture: CaptureResult, plan: EditPlan, output: Output, opts: { force?: boolean; patch?: EditorPatch } = {}): Promise<RenderResult> {
   const outPath = resolve(output.path);
   if (!opts.force && (await access(outPath).then(() => true, () => false))) {
     throw new ToolError("render", "OUTPUT_EXISTS", `${outPath} already exists`, "after-fix", "pass --force to overwrite, or change output.path");
   }
   const video = capture.videoPath;
 
-  const patch = compileEditor(capture, plan);
+  const patch = opts.patch ?? compileEditor(capture, plan);
   const wantCursor = await syncCursorSidecar(capture, plan);
 
   const { style, ...regions } = patch;

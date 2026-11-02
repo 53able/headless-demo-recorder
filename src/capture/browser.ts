@@ -9,6 +9,8 @@ export type BrowserOptions = {
   allowOrigins?: string[];
   /** agent-browser session name chosen by the caller, so it can close the session itself. */
   sessionName?: string;
+  /** Awaited right before recording starts (e.g. a barrier shared with parallel captures). */
+  ready?: () => Promise<void>;
 };
 
 type Box = { x: number; y: number; width: number; height: number };
@@ -56,6 +58,7 @@ export async function captureBrowser(src: BrowserSource, steps: Step[], workDir:
     await ab("set", "viewport", String(vw), String(vh));
     await ab("open", src.url);
     await ab("wait", "--load", "networkidle").catch(() => undefined);
+    await opts.ready?.();
     await ab("record", "start", webm, src.url);
     t0 = Date.now();
     await ab("wait", "--load", "networkidle").catch(() => undefined);
@@ -115,5 +118,5 @@ export async function captureBrowser(src: BrowserSource, steps: Step[], workDir:
   const scale = wallMs > 0 ? probe.durationMs / wallMs : 1;
   for (const e of events) e.tMs = Math.max(0, Math.round(e.tMs * scale));
   log(`browser capture: ${probe.width}x${probe.height}, ${probe.durationMs}ms video / ${wallMs}ms wall (scale ${scale.toFixed(3)})`);
-  return { videoPath: mp4, width: probe.width, height: probe.height, durationMs: probe.durationMs, events, realCursor: false };
+  return { videoPath: mp4, width: probe.width, height: probe.height, durationMs: probe.durationMs, events, realCursor: false, t0EpochMs: t0 };
 }

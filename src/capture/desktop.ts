@@ -12,6 +12,8 @@ type Win = { id: string; app_name: string; title: string; bounds: Bounds; visibl
 export type DesktopOptions = {
   /** Bundle IDs input may be sent to (`--allow-app`). Deny-listed apps are refused regardless. */
   allowApps?: string[];
+  /** Awaited once the recorder runs; video before the moment it resolves is trimmed (see `t0EpochMs`). */
+  ready?: () => Promise<void>;
 };
 
 async function ad<T>(...args: string[]): Promise<T> {
@@ -107,7 +109,14 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
     await shutdown(false);
     throw e;
   }
+  let headMs = 0;
   try {
+    const recordingStartedAt = t0;
+    if (opts.ready) {
+      await opts.ready();
+      t0 = Date.now();
+    }
+    headMs = t0 - recordingStartedAt;
     await sleep(500);
     for (const step of steps) {
       const caption = "caption" in step ? step.caption : undefined;
@@ -156,8 +165,8 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
   const raw = join(workDir, "desktop-raw.mp4");
   await copyFile(done.screenVideoPath, raw);
   const mp4 = join(workDir, "capture.mp4");
-  await toMp4(raw, mp4);
+  await toMp4(raw, mp4, { startMs: headMs });
   const probe = await ffprobe(mp4);
   log(`desktop capture: window "${title}" ${probe.width}x${probe.height}, ${probe.durationMs}ms`);
-  return { videoPath: mp4, width: probe.width, height: probe.height, durationMs: probe.durationMs, events, realCursor: false };
+  return { videoPath: mp4, width: probe.width, height: probe.height, durationMs: probe.durationMs, events, realCursor: false, t0EpochMs: t0 };
 }
