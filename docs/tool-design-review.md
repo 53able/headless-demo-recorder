@@ -115,7 +115,7 @@
 
 | 種別 | 手順 | 期待結果 | 証拠 | 状態 |
 |---|---|---|---|---|
-| 正常系 | `run scenarios/browser-wikipedia.json`、`run scenarios/desktop-calculator.json` | `ok:true`、出力動画と `inspectSheet` が生成される | コンタクトシートで、ズーム・カーソル・字幕の位置を目視で確認した | pass |
+| 正常系 | `run skills/headless-demo-recorder/assets/browser-wikipedia.json`、`run skills/headless-demo-recorder/assets/desktop-calculator.json` | `ok:true`、出力動画と `inspectSheet` が生成される | コンタクトシートで、ズーム・カーソル・字幕の位置を目視で確認した | pass |
 | 誤解系 | 録画に持ち込めない `@e3` 参照や、desktop での `scroll` を含むシナリオで `check` | 該当パス付きの error が出て、起動しない | `validate.test.ts` | pass |
 | 誤出力系 | 書き出し後に `inspect` で目視確認。`--edit` で depth を変えて `render` | 誤りを再録画なしで修正できる | `render` が約4秒で完了し、`plan` で depth が4に変わったことを確認 | pass |
 | 副作用系 | `text=Delete` を含むシナリオで `run` | `INVALID_SCENARIO`、何も起動しない | CLI の出力と終了コード1 | pass |
@@ -138,5 +138,5 @@
 - 残存リスク: モデル外の安全境界がない。desktop の録画は実アプリと実画面を使う。アイコンだけの破壊的ボタンはガードを通過する。録画に映る第三者の情報は自動では保護されない。
 - 次に行う最小検証: OpenScreen の書き出しを失敗させる注入テスト（読み取り専用の出力先を指定する）で AC-04 の経路を確認する。続いて、専用ユーザーまたは VM 上で desktop 録画を行う構成を試す。
 - Codex のサンドボックス（2026-11-02 実測、`codex sandbox -c sandbox_mode=workspace-write`）: `check`・`plan`・`inspect`・file ソースの capture（ffmpeg）は動く。`openscreen` を起動するもの（`doctor` の `openscreen help`、`render` の `openscreen info`）は、Electron アプリがウィンドウサーバーへの登録を拒否されて SIGABRT で終了し、クラッシュレポートとダイアログが出る。`doctor` は `agent-desktop permissions` も `Operation not permitted` で失敗する。`openscreen export` は `info` の失敗で到達しないため未実測（同じ理由で失敗すると推定）。
-- 未対応の不具合（Codex のサンドボックス内）: `doctor` がエラー応答の形式番号（`2.5`）を agent-desktop のバージョンとして表示する（`src/doctor.ts`）。`render` の失敗が空のメッセージの `PROJECT_INVALID` になり、`hint` が誤誘導になる（`src/render.ts`）。
+- 未対応の不具合（Codex のサンドボックス内）: `doctor` がエラー応答の形式番号（`2.5`）を agent-desktop のバージョンとして表示する（`skills/headless-demo-recorder/scripts/doctor.ts`）。`render` の失敗が空のメッセージの `PROJECT_INVALID` になり、`hint` が誤誘導になる（`skills/headless-demo-recorder/scripts/render.ts`）。
 - 未検証（任意指定の防御）: `--allowed-domains` のポート付きパターンの効き方。許可したホストの別ポートへの、ページの JS による通信の遮断。`lsappinfo` と拒否リストの前方一致による bundle ID の照合。専用ユーザーまたは VM での desktop 自動化は未着手（F-1）。

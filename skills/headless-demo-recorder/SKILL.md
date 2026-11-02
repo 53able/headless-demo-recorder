@@ -1,6 +1,6 @@
 ---
 name: headless-demo-recorder
-description: ブラウザや macOS アプリをヘッドレスで操作しながら録画し、ズーム・カーソル・字幕・ぼかしを付けた MP4/GIF のデモ動画を人手を介さずに作る。複数の録画を同時に撮って1本に結合したり、録画済みの動画に後から編集を足したりもできる。Use when the user asks for a demo, walkthrough, or screen-recording video of a web page or a macOS app, or wants zoom/captions/blur added to an existing screen recording. Don't use for live screen sharing, manual GUI video editing, or recording outside macOS.
+description: ブラウザや macOS アプリをヘッドレスで操作しながら録画し、ズーム・カーソル・字幕・ぼかしを付けた MP4/GIF のデモ動画を人手を介さずに作る。録画を開いたまま画面を観察して次の操作を1手ずつ決めることも、複数のエージェントがそれぞれの録画を同時に操作して1本に結合することも、録画済みの動画に後から編集を足すこともできる。Use when the user asks for a demo, walkthrough, or screen-recording video of a web page or a macOS app, wants agents to operate apps while being recorded, or wants zoom/captions/blur added to an existing screen recording. Don't use for live screen sharing, manual GUI video editing, physical mouse/drag input, or recording outside macOS.
 ---
 
 # headless-demo-recorder
@@ -10,17 +10,19 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
 ## 前提（Codex / Claude Code 共通）
 
 - コマンドは `bun <skill-dir>/scripts/cli.ts <command>` で呼ぶ。`<skill-dir>` は、Claude Code / Codex がこのスキルを読み込むときに示す base directory（この SKILL.md があるディレクトリ）を指す。
-- base directory が示されなければ `~/.codex/skills/headless-demo-recorder` または `~/.claude/skills/headless-demo-recorder` を `<skill-dir>` とする。
+- base directory が示されなければ、次の順に `scripts/cli.ts` があるディレクトリを `<skill-dir>` とする。プロジェクトへの導入（`npx skills add`）では `.claude/skills/headless-demo-recorder`、`.agents/skills/headless-demo-recorder`。ユーザー全体への導入（`npx skills add -g`）では `~/.claude/skills/headless-demo-recorder`、`~/.agents/skills/headless-demo-recorder`。
+- どこにも無い、または `bun` が無い場合は止めて、利用者に導入を案内する（`npx skills add 53able/headless-demo-recorder -g -a claude-code -a codex`、bun は別途導入）。コマンドやフラグが `unknown command` になるなど、スキルが古いと思われる場合は `npx skills update headless-demo-recorder` を案内する。スキルの導入と更新は利用者が行う。
 - シナリオと出力は、いま作業しているプロジェクトに置く（例: `scenarios/<name>.json`、`out/<name>.mp4`）。シナリオ内のパス（`output.path`、file ソースの `path`、composition の `scenarios[]`）は実行時のカレントディレクトリからの相対で解決される。録画には画面がそのまま入るので、出力先が `.gitignore` に入っていなければ利用者に伝える。
 - 入力 JSON の形式は `<skill-dir>/scripts/types.ts`、例のシナリオは `<skill-dir>/assets/*.json` にある。`schema` を実行すると、型定義の全文、この文書のパス（`guide`）、例のパス（`examples`）を1つの JSON で返す。返るパスは symlink を解決した実体のパスであり、`<skill-dir>` の表記と一致しないことがある。
-- 同梱の example はリポジトリルートを cwd にした雛形であり、コピー設置先ではそのまま `check` / `run` せず、自分のプロジェクトに写して書き換える。
-- `scripts/` にはテスト（*.test.ts）も同居しており、設置先で `bun test` を走らせると実行される。
+- 同梱の example は、このスキルの開発リポジトリのルートを cwd にした雛形。導入先ではそのまま `check` / `run` せず、作業中のプロジェクトに写して書き換える（特に composition の `scenarios[]` のパス）。
+- `scripts/` の `*.test.ts` はスキルの開発用で、使うときは実行しない。導入先（`.agents/skills/` などドットで始まるディレクトリ）は、利用者のプロジェクトの `bun test` の探索対象に入らない。
 - macOS の画面収録とアクセシビリティの権限は、エージェントを動かしているターミナルアプリに付与されている必要がある。付与は利用者が行う。
 - Codex のサンドボックス（`workspace-write`）では、次のコマンドを**最初から**サンドボックス外で実行する許可を求める。サンドボックス内で試さない。
   - `doctor`、`render`、`run`: `openscreen` CLI の実体は Electron アプリで、サンドボックス内で起動するとウィンドウサーバーへの登録を拒否されてクラッシュする（実測）。そのたびに macOS のクラッシュレポートが作られ、利用者の画面にダイアログが出る。
     - サンドボックス内の `doctor` は、`openscreen CLI` に加えて `permissions` の項目も `Operation not permitted` で失敗する。権限の未付与ではない。
     - サンドボックス内の `render` は、空のメッセージの `PROJECT_INVALID` を返す。`hint`（capture.mp4 の配置）に従って再試行しない。
   - browser / desktop の `capture` と、下見の `agent-browser` / `agent-desktop`: ブラウザやアプリの起動とネットワーク接続を伴う。file ソースの `capture` はサンドボックス内で動くが、続く書き出しに `openscreen` が要るので、`run` はサンドボックス外で実行する。
+  - `session` の各サブコマンド: `start` はブラウザ・アプリ・録画を起動する。`observe` / `act` / `status` / `stop` は一時ディレクトリの Unix ソケットで録画中のプロセスと通信する。すべてサンドボックス外で実行する（サンドボックス内では未実測）。
   - `check`、`plan`、`inspect`、`schema` はサンドボックス内で動く（実測）。
 - `inspectSheet` は PNG 画像。画像を読めるツール（Claude Code の Read、Codex の view_image など）で開いて確認する。
 
@@ -36,6 +38,11 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
 | `render <project-dir> [--scenario s \| --edit e] [--out f]` | R1 | プロジェクトと出力ファイルを再生成する。既存の出力は `--force` がない限り上書きしない |
 | `capture <scenario>` | R2 | アプリまたはページを起動・操作し、録画する |
 | `run <scenario>` | R2 | check → capture → render → inspect を順に実行する |
+| `session start <scenario> [--group g] [--idle-timeout 秒]` | R2 | 録画を開始して開いたままにする（browser / desktop）。シナリオの `steps` があれば先に実行する |
+| `session observe <project-dir> [--screenshot]` | R0 | 録画中の画面のアクセシビリティスナップショット（`act` で使える参照付き）を返す。`--screenshot` で PNG も保存する |
+| `session act <project-dir> '<step JSON>'` | R2 | 1手だけ実行する。シナリオの手と同じ検証（不可逆な操作、`--allow-origin`）を通る |
+| `session status <project-dir>` | R0 | 録画中・停止済み・失敗、経過時間、記録した操作数を返す |
+| `session stop <project-dir>` | R1 | 録画を止め、通常のプロジェクト（`capture.mp4`、`events.json`）として保存する |
 
 ## 作業ループ
 
@@ -57,6 +64,57 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
    - 字幕が読める。
    - 個人情報が映っていない。
 6. 修正は再録画せずに行う。`events.json`（タイミング、字幕、座標）またはシナリオの `edit` を直し、`render <project-dir> --scenario <file> --force` で再生成してから、もう一度 `inspect` する。
+
+## 操作の種類
+
+`steps` と `session act` の手は同じ形式で、`scripts/types.ts` の `Step` に従う。
+
+- `click` / `fill` / `select`（ドロップダウンやリストから `value` を選ぶ）は `target` を取る。
+- `scroll`:
+  - ブラウザではページ全体を `px` だけ動かす。`target` は付けない。
+  - デスクトップでは `target` の要素を `max(1, round(px / 100))` 単位だけ動かす。`target` は必須で、`direction` は `up` / `down` / `left` / `right` を使う。
+    - WebView のアプリ（Tauri / Pake / Electron など）では、`{ "role": "scrollarea" }` のような role だけのクエリが、ページ内の多数の要素に当たって失敗しやすい。`session observe` で得たスクロール領域の参照を使う。
+    - WebKit のなめらかなスクロールは、操作の 350ms 後には終わっていないことがある。`inspectSheet` のスクロールのコマが途中の位置を映していても、録画の後半で行き着いているかを確かめる。
+- `press`（キー）、`wait`（ミリ秒）、`mark`（字幕だけ）はどちらでも使える。`open`（URL を開く）はブラウザ専用。
+- ドラッグ、ホバー、座標指定のクリックは扱わない。agent-desktop ではこれらが `--headed`（物理入力）を要するため。
+- 1つの録画は1つのウィンドウ（desktop）または1つのページ（browser）だけを映す。複数のアプリを1本に入れるときは、アプリごとに録画して composition で並べる。
+
+## 録画中に画面を見ながら進める（session）
+
+手順を事前に決め切れない場合は `session` を使う。例えば、画面の内容によって次の操作が変わる場合や、想定外のダイアログに対応する場合がこれに当たる。録画を開いたまま、観察と1手の操作を繰り返す。
+
+1. 作業ループの1〜3と同じく、`doctor` を確かめてシナリオを書く。`steps` は空でよい。録画開始直後に必ず行う操作（初期化など）だけを `steps` に入れる。`check` を通す。
+2. `session start <scenario> [--allow-origin …] [--allow-app …]` を実行する。`ok:true` と `status: "recording"` が返ったら録画中になっている。
+3. 次の a〜c を繰り返す。
+   a. `session observe <project-dir>` で画面を見る。
+      - ブラウザでは `snapshot.refs` のキー `eN` に `@` を付けた `@eN`（`eN`、`ref=eN` も同じ扱い）が、デスクトップでは `snapshot.tree` の `ref_id`（`@<snapshot_id>:eN`）がそのまま、`act` の `target` に使える。
+      - 使えるのは、このセッションの**直近の** `observe` が返した参照だけ。1手実行するたびに参照は無効になるので、参照で指す手の前には毎回 `observe` する。別のアプリの参照、古い参照は `INVALID_STEP` で拒否される。
+      - 参照が指す要素の名前（例: `button Delete account`）は、観察した時点のものが不可逆な操作の検証にかかる。セレクタや find クエリで指した場合に検証されるのは、書いた文字列だけ（要素の実際の名前は見ない）。名前で確かめたい操作は、観察した参照で指す。
+      - 見た目で判断する必要があるときは `--screenshot` を付け、返る `screenshot` の PNG を開く。
+   b. 次の1手を決めて、`session act <project-dir> '<step JSON>'` を実行する。字幕には、その手を打つ理由を書く。
+   c. 返答を読む。
+      - `ok:true`: 次の観察へ進む。
+      - `INVALID_STEP`: 何も実行されていない。手を直す。
+      - `RECORDER_DIED`（`retry: no`）: 録画が勝手に終わった（ウィンドウが閉じた、クラッシュなど）。それまでの録画は保存処理に回る。`session status` で結果を確かめ、アプリの状態を見てから `session start --force` で始め直す。
+      - それ以外の `ok:false`（`TARGET_NOT_FOUND` など）: 録画は続いており、失敗した手はログから外れている。もう一度 `observe` してから次の手を選ぶ。再録画しない。
+4. 終わったら必ず `session stop <project-dir>` を実行する。録画中のプロセスを残さない。
+5. 返る `next` に従って `render <project-dir> --scenario <scenario> --force` を実行し、作業ループの5〜6（`inspect` と目視確認）を行う。
+
+- 考えている時間もそのまま録画に入る。`edit.idleSpeedupMs`（例: 1500）で、操作のない区間を早送りする。
+- 手は1つずつ順に実行される。セッション内では `wait` の `ms` と各手の `waitMs` は 60000 まで。`session status` は手の実行中でも答える（`busy: true`）。
+- 最後の要求が終わってから `--idle-timeout` 秒（既定 600）が経つと、録画は自動で停止・保存される。手の実行中には止まらない。
+- `session status` が `failed` を返したら、返る `log`（サーバのログ）を読む。開始に失敗した場合（`SESSION_START_FAILED`、`retry: no`）は、アプリやブラウザの状態を確かめてから `session start --force` で始め直す。
+- 1つの project を録画できるのは1本だけ。録画中は、同じ project への `session start` / `capture` / `run` が `SESSION_ACTIVE` で止まる。
+
+### 複数のエージェントで同時に録る
+
+1. エージェントごとに別のシナリオ（別の `name` と `output.path`）を用意する。そのうえで、すべてのセッションを同じ `--group <名前>` で続けて開始する。
+2. 各エージェント（サブエージェントなど）は、自分の project だけに対して `observe` / `act` を繰り返す。互いの手を待ち合わせる仕組みはない。
+3. 全員が終わったら、各 project を `session stop` する。
+4. それらのシナリオを参照する composition を書き、`render <compProj> --composition <c.json> --force` で結合する。続けて `inspect` する。
+   - 同じ group のセッションは開始時刻が揃えられる。後に始まった録画の開始時点が、結合後の先頭になる。
+   - 揃えるのは、開始時刻の差が10分以内の場合だけ。同じ group 名を別の日に使い回した録画は揃えない。録り直すときは、全員分を同時に始め直す。
+5. 同じアプリを2つのセッションで操作しない。desktop の入力は同じウィンドウに届くため。
 
 ## file ソース（既存の動画を編集する）
 
@@ -107,3 +165,5 @@ Codex で `doctor` の権限項目が `Operation not permitted`、または `ren
 - デスクトップ録画は実際のウィンドウを録る。上に重なった通知も映り込む。
 - `openscreen` をサブコマンドなし、または `--version` 付きで実行しない。GUI が起動する。`doctor` は `openscreen help` を使う。
 - `openscreen export --auto-zoom` は、ヘッドレス実行では効かない。ズームは操作ログから生成する。
+- `session act` でも不可逆な操作の検証は変わらない。拒否された手は実行しない。`allowDestructive` を手に付けるのは、無害だと確かめた場合に限る。
+  - 検証は語リストによる推定で、見るのは参照の名前（観察時点）か、セレクタ・クエリに書いた文字列だけ。観察のあとに画面が自分で書き換わった場合や、`select` で option の value 属性（表示名と異なる）を指定した場合は検出できない。
