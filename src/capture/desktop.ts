@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { copyFile, rename, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { copyFile, lstat, rename, rm } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import { bundleRefusal, parseBundleId } from "../appguard.ts";
 import { abortSignal, exists, ffprobe, log, parseNdjson, run, runOk, sleep, spawnEnv, toMp4 } from "../exec.ts";
 import { centerOf } from "../compile.ts";
@@ -13,7 +13,11 @@ type Win = { id: string; app_name: string; title: string; bounds: Bounds; visibl
 const move = (from: string, to: string) =>
   rename(from, to).catch(async (e: NodeJS.ErrnoException) => {
     if (e.code !== "EXDEV") throw e;
-    await copyFile(from, to);
+    // Across volumes: a half-written copy must not be mistaken for the recording.
+    await copyFile(from, to).catch(async (err) => {
+      await rm(to, { force: true });
+      throw err;
+    });
     await rm(from);
   });
 
@@ -21,15 +25,20 @@ const move = (from: string, to: string) =>
  * session file). Move those into `workDir` as `desktop-raw.*` so nothing accumulates there.
  * The app's media-links registry is left alone: it is the app's file. */
 async function adoptRecording(stdout: string, workDir: string): Promise<void> {
-  const done = parseNdjson(stdout).find((e) => e.event === "done" && e.success === true) as { screenVideoPath?: string; cursorDataPath?: string } | undefined;
+  const done = parseNdjson(stdout).find((e) => e.event === "done" && e.success === true) as { screenVideoPath?: string } | undefined;
   const video = done?.screenVideoPath;
-  if (!video) return;
+  if (!video) return log("openscreen record reported no file (stopped by force?); a partial recording may remain in its recordings folder");
+  // Only the recorder's own files: an absolute .mp4 and the two names derived from it, regular files only.
+  if (!isAbsolute(video) || !video.endsWith(".mp4")) throw new Error(`unexpected recording path ${video}`);
   const files: [string, string][] = [
     [video, "desktop-raw.mp4"],
-    [done.cursorDataPath ?? `${video}.cursor.json`, "desktop-raw.mp4.cursor.json"],
-    [video.replace(/\.mp4$/, ".session.json"), "desktop-raw.session.json"],
+    [`${video}.cursor.json`, "desktop-raw.mp4.cursor.json"],
+    [`${video.slice(0, -".mp4".length)}.session.json`, "desktop-raw.session.json"],
   ];
-  for (const [from, name] of files) if (await exists(from)) await move(from, join(workDir, name));
+  for (const [from, name] of files) {
+    if (!(await lstat(from).catch(() => undefined))?.isFile()) continue;
+    await move(from, join(workDir, name)).catch((e: Error) => log(`could not move ${from}: ${e.message}`));
+  }
 }
 
 export type DesktopOptions = {

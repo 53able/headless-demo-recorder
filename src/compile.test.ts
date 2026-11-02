@@ -68,11 +68,14 @@ test("unsorted, out-of-range and back-to-back events stay consistent", () => {
 });
 
 test("centerOf keeps a partly visible element's action point inside the frame", () => {
-  // Top 60% of the element is above the viewport: its true center is off-frame.
-  const p = centerOf({ x: 0.4, y: -0.12, w: 0.2, h: 0.2 });
-  expect(p).toEqual({ cx: 0.5, cy: 0 });
-  // An element right of a desktop window (a separate dialog).
-  expect(centerOf({ x: 1.05, y: 0.3, w: 0.2, h: 0.1 }).cx).toBe(1);
+  // Top 60% of the element is above the viewport: the point is the middle of the visible 40%.
+  const p = centerOf({ x: 0.4, y: -0.12, w: 0.2, h: 0.2 })!;
+  expect(p.cx).toBeCloseTo(0.5);
+  expect(p.cy).toBeCloseTo(0.04);
+  // Fully inside: the plain center.
+  expect(centerOf({ x: 0.1, y: 0.2, w: 0.2, h: 0.4 })).toEqual({ cx: 0.2, cy: 0.4 });
+  // Wholly outside a desktop window (a separate dialog): no point, so no zoom or cursor.
+  expect(centerOf({ x: 1.05, y: 0.3, w: 0.2, h: 0.1 })).toBeUndefined();
   // events.json built from it passes the check render runs (an unclamped center would not).
   expect(validateEvents([{ tMs: 0, kind: "click", point: p }], "e").filter((i) => i.level === "error")).toEqual([]);
   expect(validateEvents([{ tMs: 0, kind: "click", point: { cx: 0.5, cy: -0.02 } }], "e").some((i) => i.level === "error")).toBe(true);

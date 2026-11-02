@@ -28,6 +28,9 @@ test("check: PROJECT_COLLISION in both directions", async () => {
     const r1 = await check(comp(join(dir, "solo.mp4")));
     expect(r1.ok).toBe(false);
     expect(r1.issues.some((i) => i.path === "output.path" && i.message.includes("PROJECT_COLLISION"))).toBe(true);
+    // run stops before launching anything, with the same code agents branch on.
+    const run1 = JSON.parse((await run("bun", [cli, "run", join(dir, "comp.json")])).stdout) as { ok: boolean; code: string };
+    expect(run1).toMatchObject({ ok: false, code: "PROJECT_COLLISION" });
 
     // A referenced scenario's project is a composition's project.
     await mkdir(join(dir, "a.project"));

@@ -87,6 +87,12 @@ const readJson = async <T>(path: string, stage: "validate" | "render"): Promise<
     throw new ToolError(stage, "BAD_JSON", `cannot read ${path}: ${(e as Error).message}`, "after-fix");
   }
 };
+/** A composition's project carries composition.json (written before its capture.json); a single one does not. */
+async function projectKind(dir: string): Promise<"none" | "single" | "composite"> {
+  if (await exists(join(dir, "composition.json"))) return "composite";
+  return (await exists(join(dir, "capture.json"))) ? "single" : "none";
+}
+
 const projectDirFor = (s: { output: Output }) => {
   const out = resolve(s.output.path);
   return join(dirname(out), `${basename(out).replace(/\.[^.]+$/, "")}.project`);
@@ -134,14 +140,14 @@ async function compositionIssues(raw: unknown, f: Flags): Promise<{ issues: Issu
     if (d && dirs.indexOf(d) < i) issues.push({ path: `scenarios[${i}]`, level: "error", message: `output.path gives the same project dir as scenarios[${dirs.indexOf(d)}] (${d}); change one output.path` });
   });
   for (const [i, d] of dirs.entries()) {
-    if (d && (await exists(join(d, "composition.json")))) issues.push({ path: `scenarios[${i}]`, level: "error", message: `PROJECT_COLLISION: ${d} is a composition's project; change this scenario's output.path` });
+    if (d && (await projectKind(d)) === "composite") issues.push({ path: `scenarios[${i}]`, level: "error", message: `PROJECT_COLLISION: ${d} is a composition's project; change this scenario's output.path` });
   }
   const c = raw as Partial<Composition>;
   if (typeof c.output?.path === "string") {
     const own = projectDirFor(c as Composition);
     const j = dirs.indexOf(own);
     if (j >= 0) issues.push({ path: "output.path", level: "error", message: `gives the same project dir as scenarios[${j}] (${own}); change one output.path` });
-    else if ((await exists(join(own, "capture.json"))) && !(await exists(join(own, "composition.json")))) {
+    else if ((await projectKind(own)) === "single") {
       issues.push({ path: "output.path", level: "error", message: `PROJECT_COLLISION: ${own} holds a single-scenario capture; change output.path` });
     }
   }
@@ -153,14 +159,15 @@ async function loadComposition(path: string, f: Flags): Promise<{ comp: Composit
   const { issues, scenarios } = await compositionIssues(raw, f);
   const errors = issues.filter((i) => i.level === "error");
   if (errors.length) {
-    throw new ToolError("validate", "INVALID_COMPOSITION", errors.map((i) => `${i.path}: ${i.message}`).join("\n"), "after-fix", "fix the listed fields; nothing was launched");
+    const code = errors.some((i) => i.message.startsWith("PROJECT_COLLISION")) ? "PROJECT_COLLISION" : "INVALID_COMPOSITION";
+    throw new ToolError("validate", code, errors.map((i) => `${i.path}: ${i.message}`).join("\n"), "after-fix", "fix the listed fields; nothing was launched");
   }
   return { comp: raw as Composition, scenarios, warnings: issues.filter((i) => i.level === "warning").map((i) => `${i.path}: ${i.message}`) };
 }
 
 async function doCapture(scenario: Scenario, f: Flags, extra: { sessionName?: string; ready?: () => Promise<void>; runId?: string } = {}): Promise<{ projDir: string; capture: CaptureResult }> {
   const projDir = projectDirFor(scenario);
-  if (await exists(join(projDir, "composition.json"))) {
+  if ((await projectKind(projDir)) === "composite") {
     throw new ToolError("capture", "PROJECT_COLLISION", `${projDir} is a composition's project`, "after-fix", "change this scenario's output.path; nothing was launched");
   }
   if ((await exists(join(projDir, "capture.json"))) && !f.force) {
@@ -215,9 +222,9 @@ async function editInputs(f: Flags, projDir: string): Promise<{ name: string; pl
   return { name, plan, output: { ...(sc?.output ?? {}), path: outPath } };
 }
 
-/** `<compProj>` already holds a single-scenario recording (capture without composition.json): refuse to overwrite it. */
+/** `<compProj>` already holds a single-scenario recording: refuse to overwrite it. */
 async function assertCompositeDir(compProj: string, stage: "validate" | "render") {
-  if ((await exists(join(compProj, "capture.json"))) && !(await exists(join(compProj, "composition.json")))) {
+  if ((await projectKind(compProj)) === "single") {
     throw new ToolError(stage, "PROJECT_COLLISION", `${compProj} holds a single-scenario capture`, "after-fix", "change the composition's output.path; nothing was launched");
   }
 }

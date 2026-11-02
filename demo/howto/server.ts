@@ -25,6 +25,8 @@ Bun.serve<Session>({
   },
   fetch(req, server) {
     const url = new URL(req.url);
+    // DNS rebinding: a page on another name resolving to 127.0.0.1 must not read out/.
+    if (url.host !== `127.0.0.1:${port}`) return new Response("forbidden", { status: 403 });
     if (url.pathname === "/pty") {
       // The PTY is a writable shell: refuse pages from any other origin (cross-site WebSocket).
       if (req.headers.get("origin") !== origin) return new Response("forbidden", { status: 403 });
