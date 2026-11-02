@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { childEnv, ffprobe, log, run, runOk, sleep, toMp4 } from "../exec.ts";
 import { centerOf } from "../compile.ts";
 import type { ActionEvent, BrowserSource, CaptureResult, NRect, Step } from "../types.ts";
+import { runSteps, stepWaitMs, type Driver } from "./driver.ts";
 import { allowedDomains } from "../validate.ts";
 
 export type BrowserOptions = {
@@ -16,8 +17,8 @@ export type BrowserOptions = {
 
 type Box = { x: number; y: number; width: number; height: number };
 
-/** Drive a page with agent-browser while it records WebM, logging element boxes per action. */
-export async function captureBrowser(src: BrowserSource, steps: Step[], workDir: string, opts: BrowserOptions = {}): Promise<CaptureResult> {
+/** Open the page and start recording WebM; the returned driver performs steps and logs element boxes. */
+export async function startBrowser(src: BrowserSource, workDir: string, opts: BrowserOptions = {}): Promise<Driver> {
   const [vw, vh] = src.viewport ?? [1280, 720];
   const session = opts.sessionName ?? `headless-demo-recorder-${process.pid}-${Date.now()}`;
   if (!opts.allowOrigins?.length) log("warning: no --allow-origin given; the browser may reach any host");
@@ -55,6 +56,13 @@ export async function captureBrowser(src: BrowserSource, steps: Step[], workDir:
     }
   };
 
+  let closing: Promise<void> | undefined;
+  const close = () => (closing ??= (async () => {
+    wallMs = t0 ? Date.now() - t0 : 0;
+    if (t0) await run("agent-browser", [...base, "record", "stop"], { timeoutMs: 60_000, env, cleanup: true }).catch((e: Error) => log(`record stop failed: ${e.message}`));
+    await run("agent-browser", [...base, "close"], { timeoutMs: 30_000, env, cleanup: true }).catch((e: Error) => log(`close failed: ${e.message}`));
+  })());
+
   try {
     await ab("set", "viewport", String(vw), String(vh));
     await ab("open", src.url);
@@ -64,21 +72,34 @@ export async function captureBrowser(src: BrowserSource, steps: Step[], workDir:
     await opts.ready?.();
     await ab("wait", "--load", "networkidle").catch(() => undefined);
     await sleep(600);
+  } catch (e) {
+    await close();
+    throw e;
+  }
 
-    for (const step of steps) {
-      const caption = "caption" in step ? step.caption : undefined;
+  /** "@eN" → "role name", from the latest observe only. Cleared by every act: a ref keeps pointing at
+   * its DOM node while the node's text changes ("Next" → "Place order"), so a name is only trusted
+   * until the next input. */
+  let refs = new Map<string, string>();
+
+  const act = async (step: Step): Promise<ActionEvent | undefined> => {
+    const caption = "caption" in step ? step.caption : undefined;
+    const before = events.length;
+    refs = new Map();
+    try {
       switch (step.action) {
         case "click":
-        case "fill": {
+        case "fill":
+        case "select": {
           if (typeof step.target !== "string") throw new Error("browser targets must be selector strings");
           const rect = await boxOf(step.target);
-          const ev: ActionEvent = {
-            tMs: now(), kind: step.action === "click" ? "click" : "type", label: step.target, caption, rect,
+          events.push({
+            tMs: now(), kind: step.action === "fill" ? "type" : "click", label: step.target, caption, rect,
             point: rect && centerOf(rect), zoom: step.zoom, redact: step.redact,
-          };
-          events.push(ev);
+          });
           if (step.action === "click") await ab("click", step.target);
-          else await ab("fill", step.target, step.value);
+          else if (step.action === "fill") await ab("fill", step.target, step.value);
+          else await ab("select", step.target, step.value);
           break;
         }
         case "press":
@@ -102,22 +123,40 @@ export async function captureBrowser(src: BrowserSource, steps: Step[], workDir:
           events.push({ tMs: now(), kind: "mark", caption });
           break;
       }
-      await sleep("waitMs" in step && step.waitMs !== undefined ? step.waitMs : 900);
+    } catch (e) {
+      events.length = before; // the action did not happen as logged
+      throw e;
     }
-    await sleep(800);
-  } finally {
-    wallMs = t0 ? Date.now() - t0 : 0;
-    if (t0) await run("agent-browser", [...base, "record", "stop"], { timeoutMs: 60_000, env, cleanup: true }).catch((e: Error) => log(`record stop failed: ${e.message}`));
-    await run("agent-browser", [...base, "close"], { timeoutMs: 30_000, env, cleanup: true });
-  }
+    await sleep(stepWaitMs(step, 900));
+    return events[before];
+  };
 
-  const mp4 = join(workDir, "capture.mp4");
-  await toMp4(webm, mp4);
-  const probe = await ffprobe(mp4);
-  // The screencast starts slightly before `record start` returns and drops frames
-  // when idle; rescale wall-clock action times onto the actual video length.
-  const scale = wallMs > 0 ? probe.durationMs / wallMs : 1;
-  for (const e of events) e.tMs = Math.max(0, Math.round(e.tMs * scale));
-  log(`browser capture: ${probe.width}x${probe.height}, ${probe.durationMs}ms video / ${wallMs}ms wall (scale ${scale.toFixed(3)})`);
-  return { videoPath: mp4, width: probe.width, height: probe.height, durationMs: probe.durationMs, events, realCursor: false, t0EpochMs: t0 };
+  const observe = async (o: { screenshot?: string } = {}) => {
+    const snapshot = await abJson<{ refs?: Record<string, { role?: string; name?: string }> }>("snapshot", "-i");
+    refs = new Map(Object.entries(snapshot?.refs ?? {}).map(([k, v]) => [`@${k}`, [v.role, v.name].filter(Boolean).join(" ")]));
+    if (o.screenshot) await ab("screenshot", o.screenshot);
+    return { tMs: now(), snapshot, ...(o.screenshot ? { screenshot: o.screenshot } : {}) };
+  };
+
+  const finish = async (): Promise<CaptureResult> => {
+    await sleep(800, false);
+    await close();
+    const mp4 = join(workDir, "capture.mp4");
+    await toMp4(webm, mp4);
+    const probe = await ffprobe(mp4);
+    // The screencast starts slightly before `record start` returns and drops frames
+    // when idle; rescale wall-clock action times onto the actual video length.
+    const scale = wallMs > 0 ? probe.durationMs / wallMs : 1;
+    for (const e of events) e.tMs = Math.max(0, Math.round(e.tMs * scale));
+    log(`browser capture: ${probe.width}x${probe.height}, ${probe.durationMs}ms video / ${wallMs}ms wall (scale ${scale.toFixed(3)})`);
+    return { videoPath: mp4, width: probe.width, height: probe.height, durationMs: probe.durationMs, events, realCursor: false, t0EpochMs: t0 };
+  };
+
+  // ponytail: the browser recorder lives in agent-browser's daemon; its death surfaces as a failed step or at stop.
+  return { act, observe, close, finish, refLabel: (r) => refs.get(r), alive: () => true, elapsedMs: now, eventCount: () => events.length };
+}
+
+/** Drive a page with agent-browser while it records WebM, logging element boxes per action. */
+export async function captureBrowser(src: BrowserSource, steps: Step[], workDir: string, opts: BrowserOptions = {}): Promise<CaptureResult> {
+  return runSteps(await startBrowser(src, workDir, opts), steps);
 }

@@ -5,6 +5,7 @@ import { bundleRefusal, parseBundleId } from "../appguard.ts";
 import { abortSignal, exists, ffprobe, log, parseNdjson, run, runOk, sleep, spawnEnv, toMp4 } from "../exec.ts";
 import { centerOf } from "../compile.ts";
 import type { ActionEvent, CaptureResult, DesktopSource, DesktopTarget, NRect, Step } from "../types.ts";
+import { runSteps, stepWaitMs, type Driver } from "./driver.ts";
 
 type Env<T> = { ok: boolean; data: T; error?: { code: string; message: string; disposition?: { retry?: string } } };
 type Bounds = { x: number; y: number; width: number; height: number };
@@ -60,8 +61,8 @@ async function ad<T>(...args: string[]): Promise<T> {
   return env.data;
 }
 
-/** Record one app window with OpenScreen while agent-desktop drives it headlessly. */
-export async function captureDesktop(src: DesktopSource, steps: Step[], workDir: string, opts: DesktopOptions = {}): Promise<CaptureResult> {
+/** Start recording one app window with OpenScreen; the returned driver performs steps with agent-desktop (headless). */
+export async function startDesktop(src: DesktopSource, workDir: string, opts: DesktopOptions = {}): Promise<Driver> {
   if (!opts.allowApps?.length) log("warning: no --allow-app given; any non-deny-listed app may receive input");
   let app = src.app;
   if (src.launch) {
@@ -125,7 +126,7 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
   const now = () => Date.now() - t0;
 
   const resolveRef = async (t: DesktopTarget | string): Promise<string> => {
-    if (typeof t === "string") return t; // already a qualified ref
+    if (typeof t === "string") return t; // already a qualified ref (from find, or `session observe`)
     await guard();
     const q = ["find", "--window-id", win.id, ...(t.role ? ["--role", t.role] : []), ...(t.name ? ["--name", t.name] : []), ...(t.text ? ["--text", t.text] : []), ...(t.exact ? ["--exact"] : [])];
     const r = await ad<{ matches: { ref_id?: string; interactive?: boolean }[] }>(...q);
@@ -134,6 +135,18 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
     if (r.matches.length > 1) log(`warning: ${r.matches.length} matches for ${JSON.stringify(t)}, using the first`);
     return m.ref_id;
   };
+  /** Positions of the recorded window's scrollbars, as one comparable string ("" when it has none). */
+  const scrollbarValues = async () => {
+    const r = await ad<{ matches: { value?: unknown }[] }>("find", "--window-id", win.id, "--role", "scrollbar").catch(() => ({ matches: [] }));
+    return r.matches.map((m) => String(m.value ?? "")).join("|");
+  };
+  /** Ref and normalized box of a target; the box is optional (it only places zoom and cursor). */
+  const locate = async (t: DesktopTarget | string) => {
+    const ref = await resolveRef(t);
+    const b = await ad<{ value: Bounds }>("get", ref, "--property", "bounds").catch(() => undefined);
+    const rect = b ? norm(b.value) : undefined;
+    return { ref, rect, point: rect && centerOf(rect) };
+  };
 
   try {
     await started;
@@ -141,6 +154,15 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
     await shutdown(false);
     throw e;
   }
+  let closing: Promise<void> | undefined;
+  /** Also runs when a step throws, so the recorder never outlives the work dir. Success or not, the
+   * recording moves out of OpenScreen's folder into the work dir, which `--keep-work` (or a failed
+   * capture) keeps and a normal run removes. */
+  const close = () => (closing ??= (async () => {
+    await shutdown(true);
+    await adoptRecording(stdout, workDir).catch((e: Error) => log(`could not move the OpenScreen recording: ${e.message}`));
+  })());
+
   let headMs = 0;
   try {
     const recordingStartedAt = t0;
@@ -150,21 +172,55 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
     }
     headMs = t0 - recordingStartedAt;
     await sleep(500);
-    for (const step of steps) {
-      const caption = "caption" in step ? step.caption : undefined;
+  } catch (e) {
+    await close();
+    throw e;
+  }
+
+  /** ref_id → "role name" from the latest observe of the recorded window. Refs from anywhere
+   * else (another app's snapshot) are refused, so `--allow-app` cannot be bypassed with a ref.
+   * Cleared by every act: after an input the UI may relabel the element a ref points at. */
+  let refs = new Map<string, string>();
+
+  const act = async (step: Step): Promise<ActionEvent | undefined> => {
+    const caption = "caption" in step ? step.caption : undefined;
+    const before = events.length;
+    refs = new Map();
+    try {
       switch (step.action) {
         case "click":
-        case "fill": {
-          const ref = await resolveRef(step.target);
-          const b = await ad<{ value: Bounds }>("get", ref, "--property", "bounds").catch(() => undefined);
-          const rect = b ? norm(b.value) : undefined;
+        case "fill":
+        case "select": {
+          const { ref, rect, point } = await locate(step.target);
           events.push({
-            tMs: now(), kind: step.action === "click" ? "click" : "type", label: JSON.stringify(step.target), caption, rect,
-            point: rect && centerOf(rect), zoom: step.zoom, redact: step.redact,
+            tMs: now(), kind: step.action === "fill" ? "type" : "click", label: JSON.stringify(step.target), caption, rect,
+            point, zoom: step.zoom, redact: step.redact,
           });
           await guard();
           if (step.action === "click") await ad("click", ref);
-          else await ad("type", ref, step.value);
+          else if (step.action === "fill") await ad("type", ref, step.value);
+          else await ad("select", ref, step.value);
+          break;
+        }
+        case "scroll": {
+          if (!step.target) throw new Error("desktop scroll needs a target element");
+          const { ref, point } = await locate(step.target);
+          // Scrolling is not worth a zoom; the point only moves the synthetic cursor there.
+          events.push({ tMs: now(), kind: "scroll", label: JSON.stringify(step.target), caption, point });
+          await guard();
+          const amount = Math.max(1, Math.round((step.px ?? 300) / 100));
+          const before = await scrollbarValues();
+          try {
+            await ad("scroll", ref, "--direction", step.direction ?? "down", "--amount", String(amount));
+          } catch (e) {
+            // ponytail: agent-desktop 1.0.2 reports ACTION_FAILED for WebKit views (Tauri/Pake apps) whose
+            // scroll lands asynchronously, although the view did move (measured). Trust the window's
+            // scrollbars instead; drop this once agent-desktop's post-check waits for the scroll.
+            if (!/without the requested movement/.test((e as Error).message)) throw e;
+            await sleep(400, false);
+            if ((await scrollbarValues()) === before) throw e;
+            log("agent-desktop reported no scroll movement, but the window's scrollbar moved; keeping the step");
+          }
           break;
         }
         case "press":
@@ -182,24 +238,61 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
         default:
           throw new Error(`step ${step.action} is not supported for desktop sources`);
       }
-      await sleep("waitMs" in step && step.waitMs !== undefined ? step.waitMs : 700);
+    } catch (e) {
+      events.length = before; // the action did not happen as logged
+      throw e;
     }
-    await sleep(800);
-  } finally {
-    // Also runs when a step throws, so the recorder never outlives the work dir.
-    await shutdown(true);
-    // Success or not: move the recording out of OpenScreen's folder into the work dir, which
-    // `--keep-work` (or a failed capture) keeps and a normal run removes.
-    await adoptRecording(stdout, workDir).catch((e: Error) => log(`could not move the OpenScreen recording: ${e.message}`));
-  }
-  const code = await finished;
-  const done = parseNdjson(stdout).find((e) => e.event === "done" && e.success === true) as { screenVideoPath?: string } | undefined;
-  if (code !== 0 || !done?.screenVideoPath) throw new Error(`openscreen record failed (exit ${code}): ${stdout.slice(-1500)}`);
-  const raw = join(workDir, "desktop-raw.mp4");
-  if (!(await exists(raw))) throw new Error(`openscreen record reported ${done.screenVideoPath} but it could not be moved into ${workDir}`);
-  const mp4 = join(workDir, "capture.mp4");
-  await toMp4(raw, mp4, { startMs: headMs });
-  const probe = await ffprobe(mp4);
-  log(`desktop capture: window "${title}" ${probe.width}x${probe.height}, ${probe.durationMs}ms`);
-  return { videoPath: mp4, width: probe.width, height: probe.height, durationMs: probe.durationMs, events, realCursor: false, t0EpochMs: t0 };
+    await sleep(stepWaitMs(step, 700));
+    return events[before];
+  };
+
+  const str = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim() : undefined);
+  /** The first name/value/text found in a subtree: an element named only by its child text still gets a label. */
+  const textOf = (node: unknown): string | undefined => {
+    if (Array.isArray(node)) return node.map(textOf).find(Boolean);
+    if (!node || typeof node !== "object") return undefined;
+    const n = node as Record<string, unknown>;
+    return str(n.name) ?? str(n.value) ?? str(n.text) ?? str(n.title) ?? Object.values(n).filter((v) => v && typeof v === "object").map(textOf).find(Boolean);
+  };
+  const collect = (node: unknown, into: Map<string, string>) => {
+    if (Array.isArray(node)) return node.forEach((n) => collect(n, into));
+    if (!node || typeof node !== "object") return;
+    const n = node as { ref_id?: unknown; role?: unknown };
+    if (typeof n.ref_id === "string") into.set(n.ref_id, [str(n.role), textOf(node)].filter(Boolean).join(" "));
+    for (const v of Object.values(node)) if (v && typeof v === "object") collect(v, into);
+  };
+  const observe = async (o: { screenshot?: string } = {}) => {
+    await guard();
+    const snapshot = await ad<unknown>("snapshot", "--window-id", win.id, "-i", "--compact");
+    const next = new Map<string, string>();
+    collect(snapshot, next);
+    refs = next;
+    if (o.screenshot) await ad("screenshot", "--window-id", win.id, o.screenshot);
+    return { tMs: now(), app, window: title, snapshot, ...(o.screenshot ? { screenshot: o.screenshot } : {}) };
+  };
+
+  const finish = async (): Promise<CaptureResult> => {
+    await sleep(800, false);
+    await close();
+    const code = await finished;
+    const done = parseNdjson(stdout).find((e) => e.event === "done" && e.success === true) as { screenVideoPath?: string } | undefined;
+    if (code !== 0 || !done?.screenVideoPath) throw new Error(`openscreen record failed (exit ${code}): ${stdout.slice(-1500)}`);
+    const raw = join(workDir, "desktop-raw.mp4");
+    if (!(await exists(raw))) throw new Error(`openscreen record reported ${done.screenVideoPath} but it could not be moved into ${workDir}`);
+    const mp4 = join(workDir, "capture.mp4");
+    await toMp4(raw, mp4, { startMs: headMs });
+    const probe = await ffprobe(mp4);
+    log(`desktop capture: window "${title}" ${probe.width}x${probe.height}, ${probe.durationMs}ms`);
+    return { videoPath: mp4, width: probe.width, height: probe.height, durationMs: probe.durationMs, events, realCursor: false, t0EpochMs: t0 };
+  };
+
+  return {
+    act, observe, close, finish, refLabel: (r) => refs.get(r),
+    alive: () => rec.exitCode === null && rec.signalCode === null, elapsedMs: now, eventCount: () => events.length,
+  };
+}
+
+/** Record one app window with OpenScreen while agent-desktop drives it headlessly. */
+export async function captureDesktop(src: DesktopSource, steps: Step[], workDir: string, opts: DesktopOptions = {}): Promise<CaptureResult> {
+  return runSteps(await startDesktop(src, workDir, opts), steps);
 }
