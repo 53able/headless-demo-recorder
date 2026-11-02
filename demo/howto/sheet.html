@@ -1,0 +1,18 @@
+<!doctype html><meta charset="utf-8"><title>inspect-sheet</title>
+<!-- sheet.html?src=<path under out/> : a 4-tile inspect sheet shown as a 2x2 grid -->
+<style>html,body{margin:0;height:100%;background:#1e1e2e;color:#e6e6e6;font:22px -apple-system,sans-serif}
+body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+.grid{display:grid;grid-template-columns:repeat(2,520px);gap:12px}
+.t{width:520px;height:290px;border-radius:6px;background-repeat:no-repeat;background-size:400% 100%}</style>
+<div id="label"></div><div class="grid"></div>
+<script>
+const src = new URLSearchParams(location.search).get("src");
+document.getElementById("label").textContent = `out/${src}（1 アクション 1 コマ）`;
+const grid = document.querySelector(".grid");
+for (const pos of ["0%", "33.333%", "66.667%", "100%"]) {
+  const t = grid.appendChild(document.createElement("div"));
+  t.className = "t";
+  t.style.backgroundImage = `url("../${src}")`;
+  t.style.backgroundPosition = `${pos} 0`;
+}
+</script>

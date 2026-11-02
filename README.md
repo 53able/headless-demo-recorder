@@ -38,6 +38,7 @@ OpenScreen の `--auto-zoom` は、実際のマウスクリックを手がかり
 - bun、ffmpeg
 - `agent-browser`（0.41）、`agent-desktop`（1.0.2）
 - OpenScreen 1.13 以上（`openscreen` CLI に PATH が通っていること）
+  - macOS で PATH に通すときは、シンボリックリンクではなく実体を `exec` するスクリプトを置く（例: `printf '#!/bin/sh\nexec /Applications/Openscreen.app/Contents/MacOS/Openscreen "$@"\n'`）。シンボリックリンク経由だと `help` と `export` は動くが、`record` が `Renderer crashed` で失敗する（実測）。
 - デスクトップ録画には、ターミナルへの画面収録とアクセシビリティの権限付与が必要
 
 ## 使い方
@@ -62,6 +63,22 @@ bun src/cli.ts render out/wikipedia-search.project --edit edit.json --out out/v2
 
 - エージェントの作業手順とガードレール: `AGENTS.md`
 - 設計の根拠: `docs/tool-design-review.md`
+
+## 説明動画を作り直す
+
+`demo/howto/` は、このツールの使い方を見せる説明動画（`out/howto.mp4`）を、このツール自身で録画する手順である。ブラウザ上の端末（ttyd）で実際にコマンドを打ち、その画面を browser ソースで録画する。端末内では browser・desktop・file の3種類の `run` を実行する。
+
+```bash
+brew install ttyd                # 初回のみ
+demo/howto/serve.sh &            # 端末 :7681 と結果ページ :8765 を 127.0.0.1 で起動
+bun src/cli.ts run demo/howto/scenario.json \
+  --allow-origin http://127.0.0.1:7681 --allow-origin http://127.0.0.1:8765 --force
+kill %1                          # serve.sh を止める
+```
+
+- 端末内の desktop 録画で計算機が起動するので、desktop 録画の権限が要る（`doctor` で確認する）。
+- 録画される端末は、利用者の設定ではなく `demo/howto/zdotdir/.zshrc` で起動する。プロンプトにユーザー名やホームのパスは出ない。
+- 端末内の各コマンドは stderr を捨て、出力のパスを `out/` からの相対パスに直して表示する。絶対パスにはホームディレクトリが含まれるためである。
 
 ## Codex / Claude Code から使う
 
