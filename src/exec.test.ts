@@ -1,6 +1,19 @@
 import { expect, test } from "bun:test";
 import { childEnv, run } from "./exec.ts";
 
+test("run never passes ELECTRON_RUN_AS_NODE to a child", async () => {
+  process.env.ELECTRON_RUN_AS_NODE = "1";
+  try {
+    for (const env of [undefined, { ...process.env } as Record<string, string>]) {
+      const r = await run("/usr/bin/env", [], { env });
+      expect(r.stdout).not.toContain("ELECTRON_RUN_AS_NODE");
+      expect(r.stdout).toContain("PATH=");
+    }
+  } finally {
+    delete process.env.ELECTRON_RUN_AS_NODE;
+  }
+});
+
 test("child env is allowlisted and drops AGENT_BROWSER_*", async () => {
   process.env.AGENT_BROWSER_ALLOWED_DOMAINS = "*";
   process.env.SOME_SECRET = "x";

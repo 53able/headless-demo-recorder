@@ -30,7 +30,10 @@ type RunOpts = { input?: string; timeoutMs?: number; env?: Record<string, string
 export function run(cmd: string, args: string[], opts: RunOpts = {}): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     if (!opts.cleanup && abortSignal.aborted) return reject(abortSignal.reason);
-    const p = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], ...(opts.env ? { env: opts.env } : {}) });
+    // Electron-based hosts (e.g. T3 Code) export ELECTRON_RUN_AS_NODE=1, which makes the
+    // Electron `openscreen` binary start as plain Node and fail on every subcommand.
+    const { ELECTRON_RUN_AS_NODE: _, ...env } = opts.env ?? process.env;
+    const p = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
