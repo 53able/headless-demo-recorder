@@ -2,6 +2,16 @@
 
 「Xのサインアップを20秒で見せるデモを作って」といった依頼を、人がエディタを触らずに MP4/GIF まで仕上げる。各コマンドは stdout に JSON を1つだけ出力する。
 
+## 前提（Codex / Claude Code 共通）
+
+- コマンドはシェルから `bun src/cli.ts <command>` で呼ぶ。この文書が手順の正本で、Claude Code は `CLAUDE.md` 経由で読む。
+- macOS の画面収録とアクセシビリティの権限は、エージェントを動かしているターミナルアプリに付与されている必要がある。付与は利用者が行う。
+- Codex のサンドボックス（`workspace-write`）では、次のコマンドにサンドボックス外での実行の許可を求める。
+  - `doctor`: サンドボックス内では `agent-desktop permissions` が `Operation not permitted` で失敗し、`openscreen help` も読めない（実測）。サンドボックス内の `doctor` の失敗を、権限の未付与と取り違えない。
+  - R2 コマンド（`capture` / `run`）と、下見の `agent-browser` / `agent-desktop`: ブラウザやアプリの起動とネットワーク接続を伴う。
+  - `check` はサンドボックス内で動く（実測）。`plan` / `render` / `inspect` は未確認で、外部コマンド（`openscreen`、`ffmpeg`）の起動で失敗したら同様に許可を求める。
+- `inspectSheet` は PNG 画像。画像を読めるツール（Claude Code の Read、Codex の view_image など）で開いて確認する。
+
 ## コマンドとリスク
 
 | コマンド | リスク | 効果 |
@@ -16,8 +26,8 @@
 
 ## 作業ループ
 
-1. `doctor` を実行する。権限が `granted` でなければ止めて、利用者に付与を依頼する。OSの設定を自分で変更しない。
-2. **録画せずに下見する。** 先に、安定して指せる操作対象を見つける。
+1. `doctor` を実行する。browser / desktop を録画する場合、権限が `granted` でなければ止めて、利用者に付与を依頼する。OSの設定を自分で変更しない。file ソース（下記）だけを扱う場合、権限の項目は不要で、ツールの項目（ffmpeg、ffprobe、openscreen）が ok なら続けてよい。
+2. **録画せずに下見する。** 先に、安定して指せる操作対象を見つける（file ソースでは不要）。
    - ブラウザ:
      - `agent-browser --session explore open <url>` を実行し、続けて `agent-browser --session explore snapshot -i` を実行する。
      - 対象は CSS・id・テキストのセレクタで指定する。`@eN` 参照は録画用のセッションに引き継がれず、`check` でも拒否される。
@@ -35,6 +45,21 @@
    - 字幕が読める。
    - 個人情報が映っていない。
 6. 修正は再録画せずに行う。`events.json`（タイミング、字幕、座標）またはシナリオの `edit` を直し、`render <project-dir> --scenario <file> --force` で再生成してから、もう一度 `inspect` する。
+
+## file ソース（既存の動画を編集する）
+
+録画済みの動画（QuickTime、OBS、以前の `capture.mp4` など）に、ズーム・カーソル・字幕を付けて書き出す。ブラウザもアプリも起動しない。`run` を使ってよく、その capture 段階は ffmpeg による変換だけを行う。
+
+- `source`: `{ "type": "file", "path": "<動画>", "events": "<操作ログ>" }`。`events` は省略できる（その場合、ズーム・カーソル・字幕は付かない）。パスは実行時のカレントディレクトリからの相対で解決される。
+- 操作ログは `ActionEvent` の配列（`src/types.ts`）。座標はすべて動画のフレームに対する 0〜1 の比率で表す。
+  - `tMs`（必須）: 動画上の時刻（ミリ秒）
+  - `kind`（必須）: `click` / `type` / `press` / `scroll` / `navigate` / `wait` / `mark`
+  - `point`: 操作した点 `{cx, cy}`（`{x, y}` ではない。ピクセル値ではなく比率）。`point` を持つ `click` / `type` がズームの中心になり、`point` を持つイベントにカーソルが動く
+  - `rect`: 対象要素の矩形 `{x, y, w, h}`。ぼかし専用（`redact: true` と組で使う。`rect` の無い `redact` は効かない）
+  - `caption`（字幕の文字列）、`zoom`（false でそのイベントをズームしない）、`redact`
+- `check` は操作ログの形式も検証する。ログの中身（ラベルや座標）が動画に映っているものと合っているかは検証しないので、手順5の目視確認で確かめる。
+
+書き出した動画は OpenScreen が余白と背景を付けるため、解像度とフレームレートが入力と一致しない（例: 1280x720・30fps の入力から 1784x1080・60fps の出力）。サイズが重要なら `ffprobe` で出力を確かめる。
 
 ## 失敗時の対応: まず `retry` を読む
 
