@@ -171,6 +171,7 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
       t0 = Date.now();
     }
     headMs = t0 - recordingStartedAt;
+    log(`desktop recording started: window "${title}" of ${app}`);
     await sleep(500);
   } catch (e) {
     await close();

@@ -69,6 +69,7 @@ export async function startBrowser(src: BrowserSource, workDir: string, opts: Br
     await ab("wait", "--load", "networkidle").catch(() => undefined);
     await ab("record", "start", webm, src.url);
     t0 = Date.now();
+    log(`browser recording started: ${src.url} (${vw}x${vh})`);
     await opts.ready?.();
     await ab("wait", "--load", "networkidle").catch(() => undefined);
     await sleep(600);

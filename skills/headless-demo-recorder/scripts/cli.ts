@@ -4,7 +4,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureBrowser, startBrowser } from "./capture/browser.ts";
 import { captureDesktop, startDesktop } from "./capture/desktop.ts";
-import type { Driver } from "./capture/driver.ts";
+import { actLogged, type Driver } from "./capture/driver.ts";
 import { captureFile } from "./capture/file.ts";
 import { compileEditor } from "./compile.ts";
 import { alignWarning, buildComposite, composeEditor, DEFAULT_SIZE, emptyStreams } from "./compose.ts";
@@ -298,7 +298,8 @@ function serveSession(projDir: string) {
         ? await startDesktop(src, work, { allowApps: c.allowApps })
         : (() => { throw new Error("a session needs a browser or desktop source"); })();
     try {
-      for (const step of c.scenario.steps ?? []) await d.act(step);
+      const steps = c.scenario.steps ?? [];
+      for (const [i, step] of steps.entries()) await actLogged(d, step, `start step ${i + 1}/${steps.length}`);
     } catch (e) {
       await d.close();
       throw e;

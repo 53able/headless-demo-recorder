@@ -24,6 +24,7 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
   - browser / desktop の `capture` と、下見の `agent-browser` / `agent-desktop`: ブラウザやアプリの起動とネットワーク接続を伴う。file ソースの `capture` はサンドボックス内で動くが、続く書き出しに `openscreen` が要るので、`run` はサンドボックス外で実行する。
   - `session` の各サブコマンド: `start` はブラウザ・アプリ・録画を起動する。`observe` / `act` / `status` / `stop` は一時ディレクトリの Unix ソケットで録画中のプロセスと通信する。すべてサンドボックス外で実行する（サンドボックス内では未実測）。
   - `check`、`plan`、`inspect`、`schema` はサンドボックス内で動く（実測）。
+- 録画中の進み具合（録画の開始、各手の番号・経過時間・字幕、失敗した手、停止）は stderr に出る。`session` では録画を持つプロセスのログ `<project-dir>/session/server.log` に出る。`fill` の入力値は出さない。
 - `inspectSheet` は PNG 画像。画像を読めるツール（Claude Code の Read、Codex の view_image など）で開いて確認する。
 
 ## コマンドとリスク

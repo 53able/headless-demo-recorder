@@ -10,7 +10,7 @@ import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Driver } from "./capture/driver.ts";
+import { actLogged, type Driver } from "./capture/driver.ts";
 import { ToolError, asToolError } from "./errors.ts";
 import { exists, log, requestAbort, sleep, spawnEnv } from "./exec.ts";
 import type { CaptureResult, Scenario } from "./types.ts";
@@ -235,6 +235,7 @@ async function serveInner(projDir: string, hooks: ServeHooks, sig: Sig): Promise
   // allowHalfOpen: the client ends its side after the request; the reply still has to go back.
   const server = createServer({ allowHalfOpen: true });
   let busy: Promise<unknown> = Promise.resolve();
+  let acts = 0;
   let inFlight = 0;
   let lastActivity = Date.now();
   let stopping: Promise<Record<string, unknown>> | undefined;
@@ -242,6 +243,7 @@ async function serveInner(projDir: string, hooks: ServeHooks, sig: Sig): Promise
   const finished = new Promise<Record<string, unknown>>((r) => (done = r));
 
   const stop = (reason: string) => (stopping ??= (async () => {
+    log(`stopping the recording (${reason}) @ ${(driver.elapsedMs() / 1000).toFixed(1)}s`);
     await setState("stopping", { reason });
     let reply: Record<string, unknown>;
     try {
@@ -297,7 +299,7 @@ async function serveInner(projDir: string, hooks: ServeHooks, sig: Sig): Promise
         if (!issues.length) issues.push(...refIssues(step, config, driver));
         if (issues.length) throw new ToolError("validate", "INVALID_STEP", issues.join("\n"), "after-fix", "nothing was executed; the recording continues");
         try {
-          const event = await driver.act(step as never);
+          const event = await actLogged(driver, step as never, `act #${++acts}`);
           return { ok: true, stage: "act", tMs: driver.elapsedMs(), event };
         } catch (e) {
           throw inSession(e, "the recording continues and the step was left out of the log; run `session observe` before choosing the next step (the step may have partly run)");
