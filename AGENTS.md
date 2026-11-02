@@ -7,8 +7,10 @@
 - コマンドはシェルから `bun src/cli.ts <command>` で呼ぶ。この文書が手順の正本で、Claude Code は `CLAUDE.md` 経由で読む。
 - macOS の画面収録とアクセシビリティの権限は、エージェントを動かしているターミナルアプリに付与されている必要がある。付与は利用者が行う。
 - Codex のサンドボックス（`workspace-write`）では、次のコマンドを**最初から**サンドボックス外で実行する許可を求める。サンドボックス内で試さない。
-  - `doctor`、`render`、`run`: `openscreen` CLI の実体は Electron アプリで、サンドボックス内で起動するとウィンドウサーバーへの登録を拒否されてクラッシュする（実測）。そのたびに macOS のクラッシュレポートが作られ、利用者の画面にダイアログが出る。`doctor` は失敗として、`render` は空のメッセージの `PROJECT_INVALID` として返るので、権限の未付与やプロジェクトの破損と取り違えない。
-  - `capture` と、下見の `agent-browser` / `agent-desktop`: ブラウザやアプリの起動とネットワーク接続を伴う。
+  - `doctor`、`render`、`run`: `openscreen` CLI の実体は Electron アプリで、サンドボックス内で起動するとウィンドウサーバーへの登録を拒否されてクラッシュする（実測）。そのたびに macOS のクラッシュレポートが作られ、利用者の画面にダイアログが出る。
+    - サンドボックス内の `doctor` は、`openscreen CLI` に加えて `permissions` の項目も `Operation not permitted` で失敗する。権限の未付与ではない。
+    - サンドボックス内の `render` は、空のメッセージの `PROJECT_INVALID` を返す。`hint`（capture.mp4 の配置）に従って再試行しない。
+  - browser / desktop の `capture` と、下見の `agent-browser` / `agent-desktop`: ブラウザやアプリの起動とネットワーク接続を伴う。file ソースの `capture` はサンドボックス内で動くが、続く書き出しに `openscreen` が要るので、`run` はサンドボックス外で実行する。
   - `check`、`plan`、`inspect` はサンドボックス内で動く（実測）。
 - `inspectSheet` は PNG 画像。画像を読めるツール（Claude Code の Read、Codex の view_image など）で開いて確認する。
 
@@ -26,7 +28,7 @@
 
 ## 作業ループ
 
-1. `doctor` を実行する。browser / desktop を録画する場合、権限が `granted` でなければ止めて、利用者に付与を依頼する。OSの設定を自分で変更しない。file ソース（下記）だけを扱う場合、権限の項目は不要で、ツールの項目（ffmpeg、ffprobe、openscreen、openscreen CLI）が ok なら続けてよい。
+1. `doctor` を実行する（Codex ではサンドボックス外で）。browser / desktop を録画する場合、権限が `granted` でなければ止めて、利用者に付与を依頼する。OSの設定を自分で変更しない。file ソース（下記）だけを扱う場合、権限の項目は不要で、ツールの項目（ffmpeg、ffprobe、openscreen、openscreen CLI）が ok なら続けてよい。
 2. **録画せずに下見する。** 先に、安定して指せる操作対象を見つける（file ソースでは不要）。
    - ブラウザ:
      - `agent-browser --session explore open <url>` を実行し、続けて `agent-browser --session explore snapshot -i` を実行する。
@@ -62,6 +64,8 @@
 書き出した動画は OpenScreen が余白と背景を付けるため、解像度とフレームレートが入力と一致しない（例: 1280x720・30fps の入力から 1784x1080・60fps の出力）。サイズが重要なら `ffprobe` で出力を確かめる。
 
 ## 失敗時の対応: まず `retry` を読む
+
+Codex で `doctor` の権限項目が `Operation not permitted`、または `render` が空のメッセージの `PROJECT_INVALID` になったら、まずサンドボックス内で実行していないかを疑う（前提の節を参照）。
 
 - `safe`: 何も起きていない。そのまま再実行してよい。
 - `after-fix`: `hint` が示す箇所を直してから再実行する。`render` 段階で失敗した場合は録画が残っているので、`artifacts.retryWith` のコマンドで書き出しだけをやり直せる。
