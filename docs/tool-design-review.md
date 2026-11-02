@@ -137,5 +137,5 @@
 - 未検証: 書き出し失敗時の `retryWith` の実地確認。権限が未付与の環境での `doctor` 表示。破壊的ステップの見逃し率。呼び出し元のエージェントが `retry` に従うかどうか。
 - 残存リスク: モデル外の安全境界がない。desktop の録画は実アプリと実画面を使う。アイコンだけの破壊的ボタンはガードを通過する。録画に映る第三者の情報は自動では保護されない。
 - 次に行う最小検証: OpenScreen の書き出しを失敗させる注入テスト（読み取り専用の出力先を指定する）で AC-04 の経路を確認する。続いて、専用ユーザーまたは VM 上で desktop 録画を行う構成を試す。
-- Codex のサンドボックス（2026-11-02 実測）: `doctor` は `agent-desktop permissions` が `Operation not permitted` で失敗し、`openscreen help` の出力も読めない。`check` は動く。未検証: `plan`・`render`（`openscreen export`）・`inspect`（ffmpeg）。
+- Codex のサンドボックス（2026-11-02 実測、`codex sandbox -c sandbox_mode=workspace-write`）: `check`・`plan`・`inspect`・file ソースの capture（ffmpeg）は動く。`openscreen` を起動するもの（`doctor` の `openscreen help`、`render` の `openscreen info` / `export`）は、Electron アプリがウィンドウサーバーへの登録を拒否されて SIGABRT で終了し、クラッシュレポートとダイアログが出る。`doctor` は `agent-desktop permissions` も `Operation not permitted` で失敗し、エラー応答の形式番号（`2.5`）をバージョンと誤読する。`render` の失敗は空のメッセージの `PROJECT_INVALID` になり、原因が分からない。
 - 未検証（任意指定の防御）: `--allowed-domains` のポート付きパターンの効き方。許可したホストの別ポートへの、ページの JS による通信の遮断。`lsappinfo` と拒否リストの前方一致による bundle ID の照合。専用ユーザーまたは VM での desktop 自動化は未着手（F-1）。

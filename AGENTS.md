@@ -6,10 +6,10 @@
 
 - コマンドはシェルから `bun src/cli.ts <command>` で呼ぶ。この文書が手順の正本で、Claude Code は `CLAUDE.md` 経由で読む。
 - macOS の画面収録とアクセシビリティの権限は、エージェントを動かしているターミナルアプリに付与されている必要がある。付与は利用者が行う。
-- Codex のサンドボックス（`workspace-write`）では、次のコマンドにサンドボックス外での実行の許可を求める。
-  - `doctor`: サンドボックス内では `agent-desktop permissions` が `Operation not permitted` で失敗し、`openscreen help` も読めない（実測）。サンドボックス内の `doctor` の失敗を、権限の未付与と取り違えない。
-  - R2 コマンド（`capture` / `run`）と、下見の `agent-browser` / `agent-desktop`: ブラウザやアプリの起動とネットワーク接続を伴う。
-  - `check` はサンドボックス内で動く（実測）。`plan` / `render` / `inspect` は未確認で、外部コマンド（`openscreen`、`ffmpeg`）の起動で失敗したら同様に許可を求める。
+- Codex のサンドボックス（`workspace-write`）では、次のコマンドを**最初から**サンドボックス外で実行する許可を求める。サンドボックス内で試さない。
+  - `doctor`、`render`、`run`: `openscreen` CLI の実体は Electron アプリで、サンドボックス内で起動するとウィンドウサーバーへの登録を拒否されてクラッシュする（実測）。そのたびに macOS のクラッシュレポートが作られ、利用者の画面にダイアログが出る。`doctor` は失敗として、`render` は空のメッセージの `PROJECT_INVALID` として返るので、権限の未付与やプロジェクトの破損と取り違えない。
+  - `capture` と、下見の `agent-browser` / `agent-desktop`: ブラウザやアプリの起動とネットワーク接続を伴う。
+  - `check`、`plan`、`inspect` はサンドボックス内で動く（実測）。
 - `inspectSheet` は PNG 画像。画像を読めるツール（Claude Code の Read、Codex の view_image など）で開いて確認する。
 
 ## コマンドとリスク
@@ -26,7 +26,7 @@
 
 ## 作業ループ
 
-1. `doctor` を実行する。browser / desktop を録画する場合、権限が `granted` でなければ止めて、利用者に付与を依頼する。OSの設定を自分で変更しない。file ソース（下記）だけを扱う場合、権限の項目は不要で、ツールの項目（ffmpeg、ffprobe、openscreen）が ok なら続けてよい。
+1. `doctor` を実行する。browser / desktop を録画する場合、権限が `granted` でなければ止めて、利用者に付与を依頼する。OSの設定を自分で変更しない。file ソース（下記）だけを扱う場合、権限の項目は不要で、ツールの項目（ffmpeg、ffprobe、openscreen、openscreen CLI）が ok なら続けてよい。
 2. **録画せずに下見する。** 先に、安定して指せる操作対象を見つける（file ソースでは不要）。
    - ブラウザ:
      - `agent-browser --session explore open <url>` を実行し、続けて `agent-browser --session explore snapshot -i` を実行する。
@@ -48,7 +48,7 @@
 
 ## file ソース（既存の動画を編集する）
 
-録画済みの動画（QuickTime、OBS、以前の `capture.mp4` など）に、ズーム・カーソル・字幕を付けて書き出す。ブラウザもアプリも起動しない。`run` を使ってよく、その capture 段階は ffmpeg による変換だけを行う。
+録画済みの動画（QuickTime、OBS、以前の `capture.mp4` など）に、ズーム・カーソル・字幕を付けて書き出す。ブラウザも対象アプリも起動しない。`run` を使ってよく、その capture 段階は ffmpeg による変換だけを行う（書き出しには `openscreen` を使うので、Codex ではサンドボックス外での実行が要る）。
 
 - `source`: `{ "type": "file", "path": "<動画>", "events": "<操作ログ>" }`。`events` は省略できる（その場合、ズーム・カーソル・字幕は付かない）。パスは実行時のカレントディレクトリからの相対で解決される。
 - 操作ログは `ActionEvent` の配列（`src/types.ts`）。座標はすべて動画のフレームに対する 0〜1 の比率で表す。

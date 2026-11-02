@@ -70,7 +70,7 @@ bun src/cli.ts render out/wikipedia-search.project --edit edit.json --out out/v2
 使う前に、次を利用者が済ませておく。
 
 - 画面収録とアクセシビリティの権限を、エージェントを動かしているターミナルアプリ（Terminal、iTerm2、エディタ内蔵ターミナルなど）に付与する。`doctor` で確認できる。
-- Codex のサンドボックスでは、`doctor`（サンドボックス内では権限の確認が `Operation not permitted` で失敗する。実測）、`capture` と `run`、および下見の `agent-browser` / `agent-desktop` にサンドボックス外での実行の許可が要る。`check` はサンドボックス内で動く（実測）。`plan`、`render`、`inspect` は未確認。
+- Codex のサンドボックスでは、`doctor`、`render`、`run`、`capture`、および下見の `agent-browser` / `agent-desktop` にサンドボックス外での実行の許可が要る。`openscreen` CLI の実体は Electron アプリで、サンドボックス内で起動するとクラッシュし、macOS のクラッシュダイアログが出る（実測）。`check`、`plan`、`inspect` はサンドボックス内で動く（実測）。
 - `inspectSheet` の目視確認には、画像を読めるモデルが要る。
 
 ### 任意指定の防御
