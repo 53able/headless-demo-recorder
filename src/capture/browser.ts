@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { childEnv, ffprobe, log, run, runOk, sleep, toMp4 } from "../exec.ts";
 import type { ActionEvent, BrowserSource, CaptureResult, NRect, Step } from "../types.ts";
 import { allowedDomains } from "../validate.ts";
@@ -18,7 +19,10 @@ export async function captureBrowser(src: BrowserSource, steps: Step[], workDir:
   const session = opts.sessionName ?? `headless-demo-recorder-${process.pid}-${Date.now()}`;
   if (!opts.allowOrigins?.length) log("warning: no --allow-origin given; the browser may reach any host");
   // Every invocation carries the same restriction, including record stop/close.
-  const base = ["--session", session, ...(opts.allowOrigins?.length ? ["--allowed-domains", allowedDomains(opts.allowOrigins)] : [])];
+  // ponytail: works around an agent-browser bug (see ws-constants.js); drop once fixed upstream.
+  const base = ["--session", session, ...(opts.allowOrigins?.length
+    ? ["--allowed-domains", allowedDomains(opts.allowOrigins), "--init-script", fileURLToPath(new URL("./ws-constants.js", import.meta.url))]
+    : [])];
   const env = childEnv();
   const ab = (...args: string[]) => runOk("agent-browser", [...base, ...(src.headed ? ["--headed"] : []), ...args], { timeoutMs: 60_000, env });
   const abJson = async <T>(...args: string[]): Promise<T> => {
