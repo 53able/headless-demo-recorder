@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { validateScenario } from "./validate.ts";
+import { validateEvents, validateScenario } from "./validate.ts";
 
 const base = { name: "demo", source: { type: "browser", url: "https://example.com" }, output: { path: "out/demo.mp4" } };
 const errors = (s: unknown) => validateScenario(s).filter((i) => i.level === "error").map((i) => i.path);
@@ -49,12 +49,25 @@ test("allowOrigins matches scheme, host and port", () => {
   expect(urlErrors(base, { allowOrigins: ["example.com"] })).toEqual(["allowOrigins", "source.url"]);
 });
 
-test("controller mode rejects string refs, trims and idle speed-ups", () => {
+test("desktop string refs, trims and idle speed-ups are allowed by default", () => {
   const desk = { ...base, source: { type: "desktop", app: "Calculator" }, steps: [{ action: "click", target: "@e1" }, { action: "click", target: { role: "button", name: "1" } }] };
   expect(urlErrors(desk)).toEqual([]);
-  expect(urlErrors(desk, { controllerMode: true })).toEqual(["steps[0].target"]);
-  const edited = { ...base, edit: { trim: [{ startMs: 0, endMs: 100 }], idleSpeedupMs: 1500 } };
-  expect(urlErrors(edited)).toEqual([]);
-  expect(urlErrors(edited, { controllerMode: true })).toEqual(["edit.trim", "edit.idleSpeedupMs"]);
-  expect(urlErrors({ ...base, edit: { trim: [], idleSpeedupMs: 0 } }, { controllerMode: true })).toEqual([]);
+  expect(urlErrors({ ...base, edit: { trim: [{ startMs: 0, endMs: 100 }], idleSpeedupMs: 1500 } })).toEqual([]);
+});
+
+test("events files must use {cx, cy} points and {x, y, w, h} rects", () => {
+  const ok = [{ tMs: 0, kind: "click", point: { cx: 0.5, cy: 0.5 }, rect: { x: 0.1, y: 0.1, w: 0.2, h: 0.2 }, caption: "why", zoom: false, redact: true }, { tMs: 10, kind: "mark" }];
+  expect(validateEvents(ok)).toEqual([]);
+  const bad = [{ tMs: -1, kind: "tap", point: { x: 0.5, y: 0.5 }, rect: { x: 0, y: 0 }, caption: 3, zoom: "false" }];
+  expect(validateEvents(bad).map((i) => i.path)).toEqual(["events[0].tMs", "events[0].kind", "events[0].point", "events[0].rect", "events[0].caption", "events[0].zoom"]);
+  expect(validateEvents({}).map((i) => i.path)).toEqual(["events"]);
+});
+
+test("pixel points are errors; off-frame rects and rect-less redaction are warnings", () => {
+  const issues = validateEvents([
+    { tMs: 0, kind: "click", point: { cx: 640, cy: 360 } },
+    { tMs: 1, kind: "type", rect: { x: 0.9, y: 0.5, w: 0.2, h: 0.1 } },
+    { tMs: 2, kind: "type", redact: true },
+  ]);
+  expect(issues.map((i) => [i.path, i.level])).toEqual([["events[0].point", "error"], ["events[1].rect", "warning"], ["events[2].redact", "warning"]]);
 });

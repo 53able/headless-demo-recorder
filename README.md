@@ -63,57 +63,26 @@ bun src/cli.ts render out/wikipedia-search.project --edit edit.json --out out/v2
 - エージェントの作業手順とガードレール: `AGENTS.md`
 - 設計の根拠: `docs/tool-design-review.md`
 
-## pi で自律実行する
+## Codex / Claude Code から使う
 
-依頼文1つから完成動画までを、pi のエージェントに任せる。エージェントが使えるのは `capture_*` の8つのツールだけで、bash とファイル操作は無い。
+エージェントはシェルから `bun src/cli.ts <command>` を呼び、stdout の JSON を読んで次の手を決める。作業手順とガードレールの正本は `AGENTS.md` で、Codex はこれをそのまま読む。Claude Code は `CLAUDE.md`（中身は `@AGENTS.md` の1行）を経由して同じ内容を読む。
 
-入口は2つ。どちらも**実装中**（後続の wave で追加する）。
+使う前に、次を利用者が済ませておく。
 
-- `bin/make.ts`（実装中）: SDK を使う完全自動の実行。
-- `bin/pi-capture`（実装中）: 対話用のランチャー。隔離したセッションで pi を起動する。
+- 画面収録とアクセシビリティの権限を、エージェントを動かしているターミナルアプリ（Terminal、iTerm2、エディタ内蔵ターミナルなど）に付与する。`doctor` で確認できる。
+- Codex のサンドボックスでは、`doctor`、`render`、`run`、`capture`、および下見の `agent-browser` / `agent-desktop` にサンドボックス外での実行の許可が要る。`openscreen` CLI の実体は Electron アプリで、サンドボックス内で起動するとクラッシュし、macOS のクラッシュダイアログが出る。`doctor` の権限の確認も `Operation not permitted` で失敗する（いずれも実測）。`check`、`plan`、`inspect` はサンドボックス内で動く（実測）。
+- `inspectSheet` の目視確認には、画像を読めるモデルが要る。
 
-### 起動引数（許可リスト）
+### 任意指定の防御
 
-許可リストは**利用者の起動引数だけ**から受け取る。モデルが書くシナリオの値は無視する。既定は空で、`127.0.0.1` も許可しない。
+`check`、`capture`、`run` は次のフラグを受け付ける。指定しなければ制限はかからない。
 
-- `--allow-origin <scheme://host:port>`: browser で触ってよい origin。
-- `--allow-app <bundleId>`: desktop で操作してよいアプリ。
+- `--allow-origin <scheme://host:port>`（複数可）: シナリオ内の URL がすべて一致することを確認し、browser の通信先をこれらのホストに限る（agent-browser の `--allowed-domains`）。
+- `--allow-app <bundleId>`（複数可）: desktop の入力先をこれらのアプリに限る。`src/appguard.ts` の拒否リスト（Chrome、Safari、Edge、Firefox 系、Terminal.app、Finder、システム設定。前方一致）に当たるアプリは、指定の有無にかかわらず拒否する。それ以外のブラウザやターミナル（Brave、Arc、iTerm2 など）は拒否リストに無い。
 
 > 警告: `--allow-origin http://127.0.0.1:<port>` を許可すると、実行中はポートを区別できないため、ページの JS から**そのホスト上の他のローカルサービス（管理画面など）にも届きうる**。
 
-### 保証の範囲
-
-| 経路 | 自動実行 | 保証できること | 保証しないこと |
-|---|---|---|---|
-| file | 可 | 入力パスを利用者の指定に限る。外部への副作用がない | — |
-| browser | 可 | 実行中: 許可外の**ホスト**に通信が出ない。ポート: シナリオ内の URL の静的な照合だけ | 許可範囲の中での送信や削除。許可したホストの別ポートへの、ページの JS による通信 |
-| desktop | 不可（録画の前に利用者の承認が必須） | 入力の送り先を、許可したアプリに限る。システム系アプリ・ブラウザは拒否 | アプリが起こす外部への効果（リンクを開く、送信、共有） |
-
-単語検査は防御を重ねるために残すが、安全保証ではない。
-
-### 終了コード
-
-| exit | 意味 |
-|---|---|
-| 0 | 完了（`accepted=true`） |
-| 1 | 予期しない失敗 |
-| 2 | 引数・入力の誤り |
-| 3 | 人への引き継ぎ（desktop の承認待ち、環境の不足） |
-| 4 | 予算切れ・品質未達 |
-
-### 成果物
-
-run ごとに `runs/<id>/` に保存する（ツール呼び出しの記録、予算の推移、下見の記録 `explore.json`、`summary.json`、完成動画、確認画像、`verdict.json`）。中断・失敗時の部分的な成果物は `runs/<id>/partial/` に移す。
-
-### desktop の承認
-
-desktop のシナリオは検証のあと `handoff`（exit 3）で止まる。利用者が別のターミナルで承認する。
-
-```
-bun src/cli.ts approve <runId> <versionHash>
-```
-
-`approve` は、許可した bundle ID、全ステップ、字幕、ハッシュを表示し、TTY で `yes` の入力を求める。TTY でなければ拒否する。承認はハッシュに結び付き、シナリオが1文字でも変われば無効になる。承認後は `bun bin/make.ts --resume <runId>` で録画以降を続ける。
+モデル外の安全境界（録画回数の上限、許可リストの強制、録画前の人間による承認）は無い。破壊的な操作の検出は `check` の単語検査による推定で、安全保証ではない。
 
 ## 既知の制約
 
@@ -122,3 +91,4 @@ bun src/cli.ts approve <runId> <versionHash>
 - デスクトップ録画は1つのウィンドウしか録らない。別ウィンドウで開くダイアログ内の操作は、座標を正しく対応付けられない。
 - Whisper による字幕（`speechCaptions`）は、録画に音声が入っている場合しか使えない。ブラウザ録画には音声がない。
 - 録画は1件ずつしか実行できない。並列セッションには未対応。
+- 書き出しでは OpenScreen が余白と背景を付けるため、出力の解像度とフレームレートは入力と一致しない（例: 1280x720・30fps → 1784x1080・60fps）。

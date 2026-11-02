@@ -6,13 +6,12 @@ import { captureDesktop } from "./capture/desktop.ts";
 import { captureFile } from "./capture/file.ts";
 import { compileEditor } from "./compile.ts";
 import { doctor } from "./doctor.ts";
-import { approve } from "./approve.ts";
 import { ToolError, asToolError } from "./errors.ts";
 import { log, requestAbort } from "./exec.ts";
 import { inspect } from "./inspect.ts";
 import { render } from "./render.ts";
 import type { CaptureResult, EditPlan, Output, Scenario } from "./types.ts";
-import { type Issue, normalizeOrigin, validateScenario } from "./validate.ts";
+import { type Issue, normalizeOrigin, validateEvents, validateScenario } from "./validate.ts";
 
 const USAGE = `headless capture → edit → export
 
@@ -26,8 +25,6 @@ const USAGE = `headless capture → edit → export
   plan    <project-dir> [--edit edit.json]
                                   R0  print the editor regions that render would write
   run     <scenario.json>         check → capture → render → inspect
-  approve <runId> <versionHash> [--runs-dir runs]
-                                  human approval of a desktop scenario version (TTY only)
 
 Flags: --force (overwrite an existing capture/output), --keep-work (keep raw capture files)
 Guards (check/capture/run):
@@ -35,22 +32,20 @@ Guards (check/capture/run):
                             limited to these hosts (agent-browser --allowed-domains)
   --allow-app <bundleId>    repeatable; desktop input only to these apps (deny list always applies)
   --session-name <name>     agent-browser session to use (default: generated)
-  --controller-mode         stricter checks; requires the allowlist for the source type
 stdout: exactly one JSON object. ok:false carries stage, code, retry (safe | after-fix | no), hint.
 stderr: progress logs.`;
 
 type Flags = {
-  force: boolean; keepWork: boolean; controllerMode: boolean; allowOrigins: string[]; allowApps: string[];
+  force: boolean; keepWork: boolean; allowOrigins: string[]; allowApps: string[];
   opts: Record<string, string>; pos: string[];
 };
 
 function parseArgs(argv: string[]): Flags {
-  const f: Flags = { force: false, keepWork: false, controllerMode: false, allowOrigins: [], allowApps: [], opts: {}, pos: [] };
+  const f: Flags = { force: false, keepWork: false, allowOrigins: [], allowApps: [], opts: {}, pos: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--force") f.force = true;
     else if (a === "--keep-work") f.keepWork = true;
-    else if (a === "--controller-mode") f.controllerMode = true;
     else if (a.startsWith("--")) {
       const v = argv[++i];
       if (v === undefined) throw new ToolError("validate", "BAD_ARGS", `${a} needs a value`, "after-fix", USAGE);
@@ -64,12 +59,20 @@ function parseArgs(argv: string[]): Flags {
   return f;
 }
 
-/** Scenario issues under the guard flags. Controller mode fails closed without an allowlist. */
-function scenarioIssues(raw: unknown, f: Flags): Issue[] {
-  const issues = validateScenario(raw, { allowOrigins: f.allowOrigins.length ? f.allowOrigins : undefined, controllerMode: f.controllerMode });
-  const type = (raw as Partial<Scenario> | null)?.source?.type;
-  if (f.controllerMode && type === "browser" && !f.allowOrigins.length) issues.push({ path: "--allow-origin", level: "error", message: "required in controller mode" });
-  if (f.controllerMode && type === "desktop" && !f.allowApps.length) issues.push({ path: "--allow-app", level: "error", message: "required in controller mode" });
+/** Scenario issues under the guard flags, plus the shape of a file source's events file. */
+async function scenarioIssues(raw: unknown, f: Flags): Promise<Issue[]> {
+  const issues = validateScenario(raw, { allowOrigins: f.allowOrigins.length ? f.allowOrigins : undefined });
+  const src = (raw as Partial<Scenario> | null)?.source;
+  if (src?.type === "file" && src.events !== undefined) {
+    if (typeof src.events !== "string" || src.events === "") return [...issues, { path: "source.events", level: "error", message: "must be a path to an ActionEvent[] JSON file (or omitted)" }];
+    let events: unknown;
+    try {
+      events = JSON.parse(await readFile(resolve(src.events), "utf8"));
+    } catch (e) {
+      return [...issues, { path: "source.events", level: "error", message: `cannot read ${src.events}: ${(e as Error).message}` }];
+    }
+    issues.push(...validateEvents(events, "source.events"));
+  }
   return issues;
 }
 
@@ -88,7 +91,7 @@ const projectDirFor = (s: Scenario) => {
 
 async function loadScenario(path: string, f: Flags): Promise<{ scenario: Scenario; warnings: string[] }> {
   const raw = await readJson<unknown>(path, "validate");
-  const issues = scenarioIssues(raw, f);
+  const issues = await scenarioIssues(raw, f);
   const errors = issues.filter((i) => i.level === "error");
   if (errors.length) {
     throw new ToolError("validate", "INVALID_SCENARIO", errors.map((i) => `${i.path}: ${i.message}`).join("\n"), "after-fix", "fix the listed fields; nothing was launched");
@@ -109,7 +112,7 @@ async function doCapture(scenario: Scenario, f: Flags): Promise<{ projDir: strin
   try {
     switch (scenario.source.type) {
       case "browser": capture = await captureBrowser(scenario.source, steps, work, { allowOrigins: f.allowOrigins, sessionName: f.opts["session-name"] }); break;
-      case "desktop": capture = await captureDesktop(scenario.source, steps, work, { allowApps: f.allowApps, controllerMode: f.controllerMode }); break;
+      case "desktop": capture = await captureDesktop(scenario.source, steps, work, { allowApps: f.allowApps }); break;
       case "file": capture = await captureFile(scenario.source, work); break;
     }
   } catch (e) {
@@ -131,6 +134,12 @@ async function loadProject(projDir: string): Promise<CaptureResult> {
   const capture = await readJson<CaptureResult>(join(p, "capture.json"), "render");
   // events.json is the editable source of truth for timing/captions.
   capture.events = await readJson(join(p, "events.json"), "render");
+  const errors = validateEvents(capture.events, "events.json").filter((i) => i.level === "error");
+  if (errors.length) {
+    const shown = errors.slice(0, 10).map((i) => `${i.path}: ${i.message}`);
+    if (errors.length > 10) shown.push(`... and ${errors.length - 10} more`);
+    throw new ToolError("render", "INVALID_EVENTS", shown.join("\n"), "after-fix", `fix ${join(p, "events.json")}; the recording is unchanged`);
+  }
   return capture;
 }
 
@@ -154,7 +163,7 @@ async function main(argv: string[]): Promise<unknown> {
     case "check": {
       if (!arg) break;
       const raw = await readJson<unknown>(arg, "validate");
-      const issues = scenarioIssues(raw, f);
+      const issues = await scenarioIssues(raw, f);
       return { ok: !issues.some((i) => i.level === "error"), issues };
     }
     case "capture": {
@@ -203,12 +212,6 @@ async function main(argv: string[]): Promise<unknown> {
         ok: true, stage: "done", ...result, projectDir: projDir, warnings, inspectSheet: evidence.sheet,
         next: [`view ${evidence.sheet} and confirm each tile shows the acted element`, `render ${projDir} --scenario ${arg} --force  (after editing events.json or the edit plan)`],
       };
-    }
-    case "approve": {
-      const versionHash = f.pos[1];
-      if (!arg || !versionHash) break;
-      const { approval, record } = await approve(resolve(f.opts["runs-dir"] ?? "runs"), arg, versionHash);
-      return { ok: true, stage: "approve", approval, ...record };
     }
   }
   throw new ToolError("validate", "BAD_ARGS", `unknown command or missing argument: ${argv.join(" ")}`, "after-fix", USAGE);

@@ -98,7 +98,7 @@
 - 拒否後の挙動: 何も起動しない（`hint: nothing was launched`）。別の経路から自動で実行し直すことはない。
 - 一時停止・再開・中止: 中止は SIGINT と、録画子プロセスの段階的な終了（stop → SIGTERM → SIGKILL）。一時停止と再開は未実装。
 - 取消・補償操作: 録画中のアプリ操作は取り消せない。失敗時は `retry: no` で停止し、アプリの状態確認を求める。ファイル出力は `--force` がない限り上書きしない。
-- モデル外の安全境界（pi 自律実行の設計。実装中）: 許可リスト（`--allow-origin`、`--allow-app`）は利用者の起動引数だけから controller が受け取り、シナリオの値は無視する。browser は実行中にホスト単位で通信を制限する（ポート単位は URL の静的な照合のみ）。desktop は録画の前に、利用者だけが操作できる経路（TTY 確認つきの `approve`、またはランチャーの確認）での承認が必須。モデルのツールに承認は存在しない。アプリや許可範囲の中での効果は閉じ込められない。
+- モデル外の安全境界: なし（後回し）。CLI の `--allow-origin`（browser の通信先をホスト単位で制限する）と `--allow-app`（desktop の入力先を制限する。システム系アプリ・ブラウザは常に拒否）は任意指定の防御で、指定するかどうかは呼び出し元のエージェントに委ねられる。録画予算、許可リストの強制、録画前の人間による承認は実装していない（以前の設計は git 履歴 a66b495 を参照）。
 - 監査記録: `events.json`（実行したアクション、対象、時刻）と `capture.json` が残る。入力値（`fill` の value）はイベントに保存しないが、録画の映像には映る。
 
 ## 7. 信頼・倫理・アクセシビリティ
@@ -137,4 +137,6 @@
 - 未検証: 書き出し失敗時の `retryWith` の実地確認。権限が未付与の環境での `doctor` 表示。破壊的ステップの見逃し率。呼び出し元のエージェントが `retry` に従うかどうか。
 - 残存リスク: モデル外の安全境界がない。desktop の録画は実アプリと実画面を使う。アイコンだけの破壊的ボタンはガードを通過する。録画に映る第三者の情報は自動では保護されない。
 - 次に行う最小検証: OpenScreen の書き出しを失敗させる注入テスト（読み取り専用の出力先を指定する）で AC-04 の経路を確認する。続いて、専用ユーザーまたは VM 上で desktop 録画を行う構成を試す。
-- 未検証（pi 自律実行の境界）: `--allowed-domains` のポート付きパターンの効き方。許可したホストの別ポートへの、ページの JS による通信の遮断。`lsappinfo` と拒否リストの前方一致による bundle ID の照合。完走率（検証用ページで5回中4回以上）。専用ユーザーまたは VM での desktop 自動化は未着手（F-1）。
+- Codex のサンドボックス（2026-11-02 実測、`codex sandbox -c sandbox_mode=workspace-write`）: `check`・`plan`・`inspect`・file ソースの capture（ffmpeg）は動く。`openscreen` を起動するもの（`doctor` の `openscreen help`、`render` の `openscreen info`）は、Electron アプリがウィンドウサーバーへの登録を拒否されて SIGABRT で終了し、クラッシュレポートとダイアログが出る。`doctor` は `agent-desktop permissions` も `Operation not permitted` で失敗する。`openscreen export` は `info` の失敗で到達しないため未実測（同じ理由で失敗すると推定）。
+- 未対応の不具合（Codex のサンドボックス内）: `doctor` がエラー応答の形式番号（`2.5`）を agent-desktop のバージョンとして表示する（`src/doctor.ts`）。`render` の失敗が空のメッセージの `PROJECT_INVALID` になり、`hint` が誤誘導になる（`src/render.ts`）。
+- 未検証（任意指定の防御）: `--allowed-domains` のポート付きパターンの効き方。許可したホストの別ポートへの、ページの JS による通信の遮断。`lsappinfo` と拒否リストの前方一致による bundle ID の照合。専用ユーザーまたは VM での desktop 自動化は未着手（F-1）。

@@ -12,8 +12,6 @@ type Win = { id: string; app_name: string; title: string; bounds: Bounds; visibl
 export type DesktopOptions = {
   /** Bundle IDs input may be sent to (`--allow-app`). Deny-listed apps are refused regardless. */
   allowApps?: string[];
-  /** Refuse string-ref targets (refs bypass the window-scoped `find`). */
-  controllerMode?: boolean;
 };
 
 async function ad<T>(...args: string[]): Promise<T> {
@@ -31,9 +29,6 @@ async function ad<T>(...args: string[]): Promise<T> {
 /** Record one app window with OpenScreen while agent-desktop drives it headlessly. */
 export async function captureDesktop(src: DesktopSource, steps: Step[], workDir: string, opts: DesktopOptions = {}): Promise<CaptureResult> {
   if (!opts.allowApps?.length) log("warning: no --allow-app given; any non-deny-listed app may receive input");
-  if (opts.controllerMode && steps.some((s) => "target" in s && typeof s.target === "string")) {
-    throw new Error("string-ref targets are not allowed in controller mode");
-  }
   let app = src.app;
   if (src.launch) {
     const r = await ad<{ app: string }>("launch", src.app);

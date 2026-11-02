@@ -1,4 +1,4 @@
-export type Stage = "validate" | "doctor" | "capture" | "compile" | "render" | "inspect" | "approve";
+export type Stage = "validate" | "doctor" | "capture" | "compile" | "render" | "inspect";
 
 /** Whether the caller may simply run the same command again.
  * - safe: nothing external happened; rerun as is.
