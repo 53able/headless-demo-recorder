@@ -49,12 +49,8 @@ test("allowOrigins matches scheme, host and port", () => {
   expect(urlErrors(base, { allowOrigins: ["example.com"] })).toEqual(["allowOrigins", "source.url"]);
 });
 
-test("controller mode rejects string refs, trims and idle speed-ups", () => {
+test("desktop string refs, trims and idle speed-ups are allowed by default", () => {
   const desk = { ...base, source: { type: "desktop", app: "Calculator" }, steps: [{ action: "click", target: "@e1" }, { action: "click", target: { role: "button", name: "1" } }] };
   expect(urlErrors(desk)).toEqual([]);
-  expect(urlErrors(desk, { controllerMode: true })).toEqual(["steps[0].target"]);
-  const edited = { ...base, edit: { trim: [{ startMs: 0, endMs: 100 }], idleSpeedupMs: 1500 } };
-  expect(urlErrors(edited)).toEqual([]);
-  expect(urlErrors(edited, { controllerMode: true })).toEqual(["edit.trim", "edit.idleSpeedupMs"]);
-  expect(urlErrors({ ...base, edit: { trim: [], idleSpeedupMs: 0 } }, { controllerMode: true })).toEqual([]);
+  expect(urlErrors({ ...base, edit: { trim: [{ startMs: 0, endMs: 100 }], idleSpeedupMs: 1500 } })).toEqual([]);
 });

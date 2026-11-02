@@ -1,4 +1,4 @@
-// 計画 §5-1(c): agent-browser の --allowed-domains にポート付きパターンを書いたとき、
+// agent-browser の --allowed-domains にポート付きパターンを書いたとき、
 // 同じホストの別ポートへの通信（ページの fetch・直接の open）が遮断されるか。
 // 実行: bun tests/integration/ab-ports.ts
 //   127.0.0.1 上に2つの HTTP サーバー（A, B）を立て、パターンごとに独立した --session で検証する。
@@ -33,7 +33,7 @@ const serverB = Bun.serve({
 const A = `http://127.0.0.1:${serverA.port}`;
 const B = `http://127.0.0.1:${serverB.port}`;
 
-// 利用者の AGENT_BROWSER_* を引き継がない（計画 §1）
+// 利用者の AGENT_BROWSER_* を引き継がない
 const env: Record<string, string> = {};
 for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !k.startsWith("AGENT_BROWSER_")) env[k] = v;
 
@@ -113,9 +113,9 @@ if (pq && ho) {
   console.log(`port-qualified pattern accepted (A opened): ${accepted}`);
   console.log(`port B blocked under port-qualified pattern: ${blocked}`);
   console.log(`host-only pattern: A opened=${ho.openA.reachedA}, B reached by fetch=${ho.fetchB.reachedB}, by open=${ho.openB.reachedB}`);
-  // agent-browser 0.32.1 で記録した挙動（.omc/research/pi-feasibility.md）。変われば §0 を見直す。
+  // agent-browser 0.32.1 で記録した挙動。変われば README の --allow-origin の警告を見直す。
   const asRecorded = !accepted && blocked && ho.openA.reachedA && ho.fetchB.reachedB && ho.openB.reachedB;
-  console.log(asRecorded ? "AS-RECORDED ab-ports" : "BEHAVIOR-CHANGED ab-ports: revisit plan §0");
+  console.log(asRecorded ? "AS-RECORDED ab-ports" : "BEHAVIOR-CHANGED ab-ports: revisit the --allow-origin warning in README");
   process.exitCode = asRecorded ? 0 : 2;
 } else {
   process.exitCode = 1;

@@ -6,7 +6,6 @@ import { captureDesktop } from "./capture/desktop.ts";
 import { captureFile } from "./capture/file.ts";
 import { compileEditor } from "./compile.ts";
 import { doctor } from "./doctor.ts";
-import { approve } from "./approve.ts";
 import { ToolError, asToolError } from "./errors.ts";
 import { log, requestAbort } from "./exec.ts";
 import { inspect } from "./inspect.ts";
@@ -26,8 +25,6 @@ const USAGE = `headless capture → edit → export
   plan    <project-dir> [--edit edit.json]
                                   R0  print the editor regions that render would write
   run     <scenario.json>         check → capture → render → inspect
-  approve <runId> <versionHash> [--runs-dir runs]
-                                  human approval of a desktop scenario version (TTY only)
 
 Flags: --force (overwrite an existing capture/output), --keep-work (keep raw capture files)
 Guards (check/capture/run):
@@ -35,22 +32,20 @@ Guards (check/capture/run):
                             limited to these hosts (agent-browser --allowed-domains)
   --allow-app <bundleId>    repeatable; desktop input only to these apps (deny list always applies)
   --session-name <name>     agent-browser session to use (default: generated)
-  --controller-mode         stricter checks; requires the allowlist for the source type
 stdout: exactly one JSON object. ok:false carries stage, code, retry (safe | after-fix | no), hint.
 stderr: progress logs.`;
 
 type Flags = {
-  force: boolean; keepWork: boolean; controllerMode: boolean; allowOrigins: string[]; allowApps: string[];
+  force: boolean; keepWork: boolean; allowOrigins: string[]; allowApps: string[];
   opts: Record<string, string>; pos: string[];
 };
 
 function parseArgs(argv: string[]): Flags {
-  const f: Flags = { force: false, keepWork: false, controllerMode: false, allowOrigins: [], allowApps: [], opts: {}, pos: [] };
+  const f: Flags = { force: false, keepWork: false, allowOrigins: [], allowApps: [], opts: {}, pos: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--force") f.force = true;
     else if (a === "--keep-work") f.keepWork = true;
-    else if (a === "--controller-mode") f.controllerMode = true;
     else if (a.startsWith("--")) {
       const v = argv[++i];
       if (v === undefined) throw new ToolError("validate", "BAD_ARGS", `${a} needs a value`, "after-fix", USAGE);
@@ -64,13 +59,9 @@ function parseArgs(argv: string[]): Flags {
   return f;
 }
 
-/** Scenario issues under the guard flags. Controller mode fails closed without an allowlist. */
+/** Scenario issues under the guard flags. */
 function scenarioIssues(raw: unknown, f: Flags): Issue[] {
-  const issues = validateScenario(raw, { allowOrigins: f.allowOrigins.length ? f.allowOrigins : undefined, controllerMode: f.controllerMode });
-  const type = (raw as Partial<Scenario> | null)?.source?.type;
-  if (f.controllerMode && type === "browser" && !f.allowOrigins.length) issues.push({ path: "--allow-origin", level: "error", message: "required in controller mode" });
-  if (f.controllerMode && type === "desktop" && !f.allowApps.length) issues.push({ path: "--allow-app", level: "error", message: "required in controller mode" });
-  return issues;
+  return validateScenario(raw, { allowOrigins: f.allowOrigins.length ? f.allowOrigins : undefined });
 }
 
 const readJson = async <T>(path: string, stage: "validate" | "render"): Promise<T> => {
@@ -109,7 +100,7 @@ async function doCapture(scenario: Scenario, f: Flags): Promise<{ projDir: strin
   try {
     switch (scenario.source.type) {
       case "browser": capture = await captureBrowser(scenario.source, steps, work, { allowOrigins: f.allowOrigins, sessionName: f.opts["session-name"] }); break;
-      case "desktop": capture = await captureDesktop(scenario.source, steps, work, { allowApps: f.allowApps, controllerMode: f.controllerMode }); break;
+      case "desktop": capture = await captureDesktop(scenario.source, steps, work, { allowApps: f.allowApps }); break;
       case "file": capture = await captureFile(scenario.source, work); break;
     }
   } catch (e) {
@@ -203,12 +194,6 @@ async function main(argv: string[]): Promise<unknown> {
         ok: true, stage: "done", ...result, projectDir: projDir, warnings, inspectSheet: evidence.sheet,
         next: [`view ${evidence.sheet} and confirm each tile shows the acted element`, `render ${projDir} --scenario ${arg} --force  (after editing events.json or the edit plan)`],
       };
-    }
-    case "approve": {
-      const versionHash = f.pos[1];
-      if (!arg || !versionHash) break;
-      const { approval, record } = await approve(resolve(f.opts["runs-dir"] ?? "runs"), arg, versionHash);
-      return { ok: true, stage: "approve", approval, ...record };
     }
   }
   throw new ToolError("validate", "BAD_ARGS", `unknown command or missing argument: ${argv.join(" ")}`, "after-fix", USAGE);
