@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { childEnv, ffprobe, log, run, runOk, sleep, toMp4 } from "../exec.ts";
+import { centerOf } from "../compile.ts";
 import type { ActionEvent, BrowserSource, CaptureResult, NRect, Step } from "../types.ts";
 import { allowedDomains } from "../validate.ts";
 
@@ -73,7 +74,7 @@ export async function captureBrowser(src: BrowserSource, steps: Step[], workDir:
           const rect = await boxOf(step.target);
           const ev: ActionEvent = {
             tMs: now(), kind: step.action === "click" ? "click" : "type", label: step.target, caption, rect,
-            point: rect && { cx: rect.x + rect.w / 2, cy: rect.y + rect.h / 2 }, zoom: step.zoom, redact: step.redact,
+            point: rect && centerOf(rect), zoom: step.zoom, redact: step.redact,
           };
           events.push(ev);
           if (step.action === "click") await ab("click", step.target);

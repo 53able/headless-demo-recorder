@@ -29,6 +29,10 @@
       "caption": "file ソース：録画済みの動画に、ぼかしや余白を後から足す", "waitMs": 700 },
     { "action": "press", "key": "Enter", "waitMs": 18000 },
 
+    { "action": "fill", "target": "#terminal textarea", "value": "clear; bun src/cli.ts run scenarios/composition-calc-wiki.json --allow-app com.apple.calculator --allow-origin https://en.wikipedia.org --force 2>/dev/null | jq '{ok, outputPath, startSkewMs, zooms} | .outputPath |= sub(\".*/out/\"; \"out/\")'", "zoom": false,
+      "caption": "composition：計算機と Wikipedia を同時に録り、1本に結合する", "waitMs": 700 },
+    { "action": "press", "key": "Enter", "waitMs": 40000 },
+
     { "action": "open", "url": "http://127.0.0.1:7681/demo/sheet.html?src=wikipedia-search.project/inspect-sheet.png",
       "caption": "inspect-sheet：各コマで要素・カーソル・字幕を目で確かめる", "waitMs": 3000 },
     { "action": "wait", "ms": 2500 },
@@ -40,6 +44,12 @@
 
     { "action": "open", "url": "http://127.0.0.1:7681/demo/media.html?src=calculator.gif",
       "caption": "desktop の録画は GIF でも書き出せる", "waitMs": 3000 },
+    { "action": "wait", "ms": 3000 },
+    { "action": "wait", "ms": 3000 },
+
+    { "action": "open", "url": "http://127.0.0.1:7681/demo/media.html?src=calc-wiki.mp4",
+      "caption": "結合した1本：左右に並べた場面のあと、Wikipedia だけの場面が続く", "waitMs": 3000 },
+    { "action": "wait", "ms": 3000 },
     { "action": "wait", "ms": 3000 },
     { "action": "wait", "ms": 3000 },
     { "action": "mark", "caption": "直すときは edit を変えて render --force。再録画は不要", "waitMs": 3500 }

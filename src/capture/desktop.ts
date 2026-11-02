@@ -1,13 +1,36 @@
 import { spawn } from "node:child_process";
-import { copyFile } from "node:fs/promises";
+import { copyFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { bundleRefusal, parseBundleId } from "../appguard.ts";
-import { abortSignal, ffprobe, log, parseNdjson, run, runOk, sleep, spawnEnv, toMp4 } from "../exec.ts";
+import { abortSignal, exists, ffprobe, log, parseNdjson, run, runOk, sleep, spawnEnv, toMp4 } from "../exec.ts";
+import { centerOf } from "../compile.ts";
 import type { ActionEvent, CaptureResult, DesktopSource, DesktopTarget, NRect, Step } from "../types.ts";
 
 type Env<T> = { ok: boolean; data: T; error?: { code: string; message: string; disposition?: { retry?: string } } };
 type Bounds = { x: number; y: number; width: number; height: number };
 type Win = { id: string; app_name: string; title: string; bounds: Bounds; visible: boolean; pid?: number };
+
+const move = (from: string, to: string) =>
+  rename(from, to).catch(async (e: NodeJS.ErrnoException) => {
+    if (e.code !== "EXDEV") throw e;
+    await copyFile(from, to);
+    await rm(from);
+  });
+
+/** `openscreen record` always writes into the app's recordings folder (video, cursor telemetry,
+ * session file). Move those into `workDir` as `desktop-raw.*` so nothing accumulates there.
+ * The app's media-links registry is left alone: it is the app's file. */
+async function adoptRecording(stdout: string, workDir: string): Promise<void> {
+  const done = parseNdjson(stdout).find((e) => e.event === "done" && e.success === true) as { screenVideoPath?: string; cursorDataPath?: string } | undefined;
+  const video = done?.screenVideoPath;
+  if (!video) return;
+  const files: [string, string][] = [
+    [video, "desktop-raw.mp4"],
+    [done.cursorDataPath ?? `${video}.cursor.json`, "desktop-raw.mp4.cursor.json"],
+    [video.replace(/\.mp4$/, ".session.json"), "desktop-raw.session.json"],
+  ];
+  for (const [from, name] of files) if (await exists(from)) await move(from, join(workDir, name));
+}
 
 export type DesktopOptions = {
   /** Bundle IDs input may be sent to (`--allow-app`). Deny-listed apps are refused regardless. */
@@ -128,7 +151,7 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
           const rect = b ? norm(b.value) : undefined;
           events.push({
             tMs: now(), kind: step.action === "click" ? "click" : "type", label: JSON.stringify(step.target), caption, rect,
-            point: rect && { cx: rect.x + rect.w / 2, cy: rect.y + rect.h / 2 }, zoom: step.zoom, redact: step.redact,
+            point: rect && centerOf(rect), zoom: step.zoom, redact: step.redact,
           });
           await guard();
           if (step.action === "click") await ad("click", ref);
@@ -156,14 +179,15 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
   } finally {
     // Also runs when a step throws, so the recorder never outlives the work dir.
     await shutdown(true);
+    // Success or not: move the recording out of OpenScreen's folder into the work dir, which
+    // `--keep-work` (or a failed capture) keeps and a normal run removes.
+    await adoptRecording(stdout, workDir).catch((e: Error) => log(`could not move the OpenScreen recording: ${e.message}`));
   }
   const code = await finished;
   const done = parseNdjson(stdout).find((e) => e.event === "done" && e.success === true) as { screenVideoPath?: string } | undefined;
   if (code !== 0 || !done?.screenVideoPath) throw new Error(`openscreen record failed (exit ${code}): ${stdout.slice(-1500)}`);
-
-  // Copy into the work dir so the project and its media live together.
   const raw = join(workDir, "desktop-raw.mp4");
-  await copyFile(done.screenVideoPath, raw);
+  if (!(await exists(raw))) throw new Error(`openscreen record reported ${done.screenVideoPath} but it could not be moved into ${workDir}`);
   const mp4 = join(workDir, "capture.mp4");
   await toMp4(raw, mp4, { startMs: headMs });
   const probe = await ffprobe(mp4);

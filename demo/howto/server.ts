@@ -14,7 +14,7 @@ const outDir = join(root, "out");
 
 type Session = { cols: number; rows: number; proc?: ReturnType<typeof Bun.spawn> };
 
-Bun.serve<Session, {}>({
+Bun.serve<Session>({
   hostname: "127.0.0.1",
   port,
   development: false,

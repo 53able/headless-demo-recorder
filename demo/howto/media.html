@@ -6,7 +6,9 @@ video,img{max-width:94vw;max-height:78vh;border-radius:8px}</style>
 <div id="label"></div>
 <script>
 const src = new URLSearchParams(location.search).get("src");
-document.getElementById("label").textContent = `out/${src}`;
-const el = document.body.appendChild(document.createElement(src.endsWith(".gif") ? "img" : "video"));
-Object.assign(el, { src: `/out/${encodeURI(src)}`, autoplay: true, muted: true, playsInline: true });
+document.getElementById("label").textContent = src ? `out/${src}` : "?src=<file under out/> is missing";
+if (src) {
+  const el = document.body.appendChild(document.createElement(src.endsWith(".gif") ? "img" : "video"));
+  Object.assign(el, { src: `/out/${encodeURI(src)}`, autoplay: true, muted: true, playsInline: true });
+}
 </script>

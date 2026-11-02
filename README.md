@@ -99,7 +99,7 @@ bun src/cli.ts run scenarios/composition-calc-wiki.json --allow-app com.apple.ca
 端末は [wterm](https://github.com/vercel-labs/wterm)（DOM で描画するウェブ端末）と、Bun の PTY（`Bun.spawn` の `terminal`）で動かす。`demo/howto/server.ts` が、端末、結果ページ（`/demo/`）、`out/` の配信を 127.0.0.1:7681 の1つのポートで受け持つ。
 
 ```bash
-bun install --cwd demo/howto      # 初回のみ（@wterm/dom）
+bun install --cwd demo/howto      # 初回のみ（@wterm/dom）。型検査は bun run --cwd demo/howto typecheck
 bun demo/howto/server.ts &        # 127.0.0.1:7681
 bun src/cli.ts run demo/howto/scenario.json --allow-origin http://127.0.0.1:7681 --force
 kill %1
@@ -139,6 +139,7 @@ kill %1
 - デスクトップ録画は1つのウィンドウしか録らない。別ウィンドウで開くダイアログ内の操作は、座標を正しく対応付けられない。
 - Whisper による字幕（`speechCaptions`）は、録画に音声が入っている場合しか使えない。ブラウザ録画には音声がない。
 - 1プロセスで同時に録画できるのは composition の2本まで。別プロセスの `run` の同時実行や、同じシナリオを参照する2つの composition の同時実行は、ロックが無いため project dir を壊しうる。
+- `openscreen record` は録画をアプリのフォルダ（macOS では `~/Library/Application Support/openscreen/recordings/`）に書く。desktop の capture は、録画が終わるとその動画・カーソル情報・session ファイルを project の `work/` に移す（`--keep-work` を付けなければ work ごと消える）。アプリの `media-links.registry.json` には参照が残るが、書き換えない。
 - desktop の録画は同時に2本録れる（`openscreen record --window` はウィンドウ単位で、重なっていても個別に録れる）。ヘッドレスの `fill` / `press` はアクセシビリティ API で対象要素に直接届くため、もう一方のアプリの操作や前面化で文字が欠けることはなかった（2026-11 実測: TextEdit への入力と計算機のクリック・前面化を同時に各3回、欠落なし。`.omc/research/ac3-desktop-typing.md`）。
 - agent-browser（0.41.1 で確認）は `--allowed-domains` の指定時に `window.WebSocket` を差し替えるが、`WebSocket.OPEN` などの定数を引き継がない。`readyState === WebSocket.OPEN` を確かめてから送信するページ（ttyd など）は、何も送信できなくなる。`--allow-origin` を指定したときは、`src/capture/ws-constants.js` を初期化スクリプトとして差し込んで定数を補う。
 - 書き出しでは OpenScreen が余白と背景を付けるため、出力の解像度とフレームレートは入力と一致しない（例: 1280x720・30fps → 1784x1080・60fps）。

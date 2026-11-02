@@ -1,7 +1,7 @@
 // Turns an action log into OpenScreen editor regions and a synthetic cursor track.
 // Pure functions: no I/O, unit-tested in compile.test.ts.
 
-import type { ActionEvent, CaptureResult, EditPlan, NPoint } from "./types.ts";
+import type { ActionEvent, CaptureResult, EditPlan, NPoint, NRect } from "./types.ts";
 
 export type ZoomRegion = { id: string; startMs: number; endMs: number; depth: number; focus: NPoint; focusMode: "manual"; source: "manual" };
 export type AnnotationRegion = Record<string, unknown> & { id: string; startMs: number; endMs: number };
@@ -18,6 +18,10 @@ export type EditorPatch = {
 };
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** The action point of an element: its center, kept inside the frame. A partly visible element
+ * (or one outside a desktop window) has its center off-frame, which events.json validation rejects. */
+export const centerOf = (r: NRect): NPoint => ({ cx: clamp(r.x + r.w / 2, 0, 1), cy: clamp(r.y + r.h / 2, 0, 1) });
 const dist = (a: NPoint, b: NPoint) => Math.hypot(a.cx - b.cx, a.cy - b.cy);
 
 /** Events from files or the `plan` command may be unsorted or run past the video end. */

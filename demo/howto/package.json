@@ -4,5 +4,11 @@
   "type": "module",
   "dependencies": {
     "@wterm/dom": "0.5.7"
+  },
+  "scripts": {
+    "typecheck": "bunx tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
   }
 }

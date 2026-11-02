@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { captureBrowser } from "./capture/browser.ts";
 import { captureDesktop } from "./capture/desktop.ts";
@@ -8,7 +8,7 @@ import { compileEditor } from "./compile.ts";
 import { buildComposite, composeEditor, DEFAULT_SIZE, emptyStreams } from "./compose.ts";
 import { doctor } from "./doctor.ts";
 import { ToolError, asToolError } from "./errors.ts";
-import { barrier, log, requestAbort } from "./exec.ts";
+import { barrier, exists, log, requestAbort } from "./exec.ts";
 import { inspect } from "./inspect.ts";
 import { render } from "./render.ts";
 import type { CaptureResult, Composition, EditPlan, Output, Scenario } from "./types.ts";
@@ -34,7 +34,8 @@ Guards (check/capture/run):
   --allow-origin <origin>   repeatable; every URL must match scheme+host+port; the browser is
                             limited to these hosts (agent-browser --allowed-domains)
   --allow-app <bundleId>    repeatable; desktop input only to these apps (deny list always applies)
-  --session-name <name>     agent-browser session to use (default: generated)
+  --session-name <name>     agent-browser session to use (default: generated); a composition
+                            uses <name>-<scenario name> for each browser scenario
 stdout: exactly one JSON object. ok:false carries stage, code, retry (safe | after-fix | no), hint.
 stderr: progress logs.`;
 
@@ -86,7 +87,6 @@ const readJson = async <T>(path: string, stage: "validate" | "render"): Promise<
     throw new ToolError(stage, "BAD_JSON", `cannot read ${path}: ${(e as Error).message}`, "after-fix");
   }
 };
-const exists = (p: string) => access(p).then(() => true, () => false);
 const projectDirFor = (s: { output: Output }) => {
   const out = resolve(s.output.path);
   return join(dirname(out), `${basename(out).replace(/\.[^.]+$/, "")}.project`);
@@ -133,11 +133,17 @@ async function compositionIssues(raw: unknown, f: Flags): Promise<{ issues: Issu
   dirs.forEach((d, i) => {
     if (d && dirs.indexOf(d) < i) issues.push({ path: `scenarios[${i}]`, level: "error", message: `output.path gives the same project dir as scenarios[${dirs.indexOf(d)}] (${d}); change one output.path` });
   });
+  for (const [i, d] of dirs.entries()) {
+    if (d && (await exists(join(d, "composition.json")))) issues.push({ path: `scenarios[${i}]`, level: "error", message: `PROJECT_COLLISION: ${d} is a composition's project; change this scenario's output.path` });
+  }
   const c = raw as Partial<Composition>;
   if (typeof c.output?.path === "string") {
     const own = projectDirFor(c as Composition);
     const j = dirs.indexOf(own);
     if (j >= 0) issues.push({ path: "output.path", level: "error", message: `gives the same project dir as scenarios[${j}] (${own}); change one output.path` });
+    else if ((await exists(join(own, "capture.json"))) && !(await exists(join(own, "composition.json")))) {
+      issues.push({ path: "output.path", level: "error", message: `PROJECT_COLLISION: ${own} holds a single-scenario capture; change output.path` });
+    }
   }
   return { issues, scenarios: scenarios as Scenario[] };
 }

@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { access } from "node:fs/promises";
+
+export const exists = (p: string) => access(p).then(() => true, () => false);
 
 export type RunResult = { code: number; stdout: string; stderr: string };
 
