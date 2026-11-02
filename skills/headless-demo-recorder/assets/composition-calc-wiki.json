@@ -1,6 +1,6 @@
 {
   "name": "calc-wiki",
-  "scenarios": ["scenarios/desktop-calculator.json", "scenarios/browser-wikipedia.json"],
+  "scenarios": ["skills/headless-demo-recorder/assets/desktop-calculator.json", "skills/headless-demo-recorder/assets/browser-wikipedia.json"],
   "scenes": [
     { "layout": "side-by-side", "streams": [{ "scenario": "calculator" }, { "scenario": "wikipedia-search" }] },
     { "layout": "single", "streams": [{ "scenario": "wikipedia-search" }] }

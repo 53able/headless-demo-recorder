@@ -3,9 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": {
-    "headless-demo-recorder": "src/cli.ts"
-  },
   "scripts": {
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test"

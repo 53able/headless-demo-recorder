@@ -315,12 +315,13 @@ async function main(argv: string[]): Promise<unknown> {
     }
     case "schema": {
       // The types are the schema: print them as they are, so the answer never drifts from the code.
+      // root = the skill directory (<skill>/scripts/cli.ts → <skill>). Paths are the real ones, not the symlink's.
       const root = dirname(dirname(fileURLToPath(import.meta.url)));
-      const examples = (await readdir(join(root, "scenarios"))).filter((n) => n.endsWith(".json")).map((n) => join(root, "scenarios", n));
+      const examples = (await readdir(join(root, "assets"))).filter((n) => n.endsWith(".json")).map((n) => join(root, "assets", n));
       return {
-        ok: true, guide: join(root, "AGENTS.md"), examples,
-        note: "Scenario = one recording; Composition = 1-2 scenarios recorded together and joined; ActionEvent[] = an events.json. Paths inside a scenario resolve against the current directory. Value limits (0..1 fractions, max 2 scenarios, ...) are enforced by `check`.",
-        types: await readFile(join(root, "src", "types.ts"), "utf8"),
+        ok: true, guide: join(root, "SKILL.md"), examples,
+        note: "Scenario = one recording; Composition = 1-2 scenarios recorded together and joined; ActionEvent[] = an events.json. Paths inside a scenario resolve against the current directory. The examples are templates written for the repository root as cwd; copy and adapt them rather than running them in place. Value limits (0..1 fractions, max 2 scenarios, ...) are enforced by `check`.",
+        types: await readFile(join(root, "scripts", "types.ts"), "utf8"),
       };
     }
     case "check": {

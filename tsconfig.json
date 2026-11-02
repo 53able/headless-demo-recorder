@@ -4,5 +4,5 @@
     "strict": true, "noEmit": true, "types": ["bun"], "skipLibCheck": true,
     "allowImportingTsExtensions": true, "noUncheckedIndexedAccess": true
   },
-  "include": ["src", "tests"]
+  "include": ["skills/headless-demo-recorder/scripts", "tests"]
 }

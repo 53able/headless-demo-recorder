@@ -49,18 +49,17 @@ Claude Code か Codex に次のプロンプトを貼ると、このマシンの�
 headless-demo-recorder を、このマシンのどのプロジェクトからでも Claude Code と Codex で使えるようにセットアップしてください。
 
 ## 完了条件
-- 任意のディレクトリで `headless-demo-recorder doctor` が `"ok": true` を返す
-- `headless-demo-recorder schema` が `"ok": true` を返す
-- `~/.claude/skills/headless-demo-recorder` と `~/.codex/skills/headless-demo-recorder` から、リポジトリ内の `skills/headless-demo-recorder/SKILL.md` が読める
+- 任意のディレクトリで `bun <リポジトリの絶対パス>/skills/headless-demo-recorder/scripts/cli.ts doctor` が `"ok": true` を返す
+- 同じく `schema` が `"ok": true` を返す
+- `~/.claude/skills/headless-demo-recorder` と `~/.codex/skills/headless-demo-recorder` が、リポジトリ内の `skills/headless-demo-recorder` を指している（シンボリックリンクが解決する）
 
 ## 手順
 1. 前提を調べる（読み取りのみ）: macOS であること、`bun`・`ffmpeg`・`agent-browser`（0.41 以上）・`agent-desktop`（1.0.2 以上）の有無と版、`/Applications/Openscreen.app`（1.13 以上）の有無。足りないものを一覧にする。
 2. リポジトリ: `~/headless-demo-recorder` が無ければ `git clone https://github.com/53able/headless-demo-recorder ~/headless-demo-recorder`。あれば `git -C ~/headless-demo-recorder pull --ff-only`。
-3. PATH 上のユーザー用ディレクトリ（`~/.local/bin` が PATH にあればそこ。無ければ PATH にある書き込み可能なユーザー用ディレクトリ）に、次の2つのシェルスクリプトを置いて実行権限を付ける。パスはすべて展開した絶対パスで書く。
-   - `headless-demo-recorder`: `exec bun <リポジトリの絶対パス>/src/cli.ts "$@"`
-   - `openscreen`: `unset ELECTRON_RUN_AS_NODE` のあと `exec /Applications/Openscreen.app/Contents/MacOS/Openscreen "$@"`。シンボリックリンクにはしない（`record` が失敗する）
-4. `~/.claude/skills/headless-demo-recorder` と `~/.codex/skills/headless-demo-recorder` を、`<リポジトリの絶対パス>/skills/headless-demo-recorder` へのシンボリックリンクにする。
-5. `headless-demo-recorder doctor` と `headless-demo-recorder schema` を実行し、結果を報告する。
+3. `~/.claude/skills/headless-demo-recorder` と `~/.codex/skills/headless-demo-recorder` を、`<リポジトリの絶対パス>/skills/headless-demo-recorder` へのシンボリックリンクにする（リンクを使えない場合はディレクトリごとコピーする）。
+4. PATH 上のユーザー用ディレクトリ（`~/.local/bin` が PATH にあればそこ。無ければ PATH にある書き込み可能なユーザー用ディレクトリ）に、`openscreen` というシェルスクリプトを置いて実行権限を付ける。中身は `unset ELECTRON_RUN_AS_NODE` のあと `exec /Applications/Openscreen.app/Contents/MacOS/Openscreen "$@"`。シンボリックリンクにはしない（`record` が失敗する）。パスはすべて展開した絶対パスで書く。
+5. （任意。人が手で叩くとき用）同じディレクトリに `headless-demo-recorder` というシェルスクリプトを置き、中身を `exec bun <リポジトリの絶対パス>/skills/headless-demo-recorder/scripts/cli.ts "$@"` にする。
+6. `bun <リポジトリの絶対パス>/skills/headless-demo-recorder/scripts/cli.ts doctor` と同じく `schema` を実行し、結果を報告する。
 
 ## 守ること
 - 足りないツールの導入（brew install、npm i -g、OpenScreen の入手）は、実行するコマンドを一覧にして、私の承認を得てから行う。
@@ -71,18 +70,20 @@ headless-demo-recorder を、このマシンのどのプロジェクトからで
 - 各手順のあとに「✅ <やったこと>」を1行出す。完了条件を満たしたら、または私の判断が要るところで止まる。
 ````
 
-セットアップ後は、どのプロジェクトでも「このページのサインアップを15秒のデモ動画にして」のように頼めばスキルが使われる。
+セットアップ後は、どのプロジェクトでも「このページのサインアップを15秒のデモ動画にして」のように頼めばスキルが使われる。以前のセットアップで置いた `~/.local/bin/headless-demo-recorder` ラッパーが旧パス（リポジトリ直下の `src` ディレクトリにあった `cli.ts`）を指しているなら、削除するか新しいパスに書き換える。
 
 ## 使い方
 
+以下の `headless-demo-recorder <cmd>` は `bun <skill-dir>/scripts/cli.ts <cmd>` の略記（任意でラッパーを置いてもよい）。
+
 ```bash
 bun install && bun test
-bun src/cli.ts doctor                                   # ツールと権限を確認（読み取りのみ）
-bun src/cli.ts schema                                   # 入力 JSON の型定義・手順書・例の場所
-bun src/cli.ts check scenarios/browser-wikipedia.json   # 検証のみ。何も起動しない
-bun src/cli.ts run scenarios/browser-wikipedia.json     # capture → render → inspect
-bun src/cli.ts render out/wikipedia-search.project --edit edit.json --out out/v2.mp4   # 再録画せずに再編集
-bun src/cli.ts run scenarios/composition-calc-wiki.json --allow-app com.apple.calculator --allow-origin https://en.wikipedia.org   # 2本を同時に録画して1本に
+bun skills/headless-demo-recorder/scripts/cli.ts doctor                                   # ツールと権限を確認（読み取りのみ）
+bun skills/headless-demo-recorder/scripts/cli.ts schema                                   # 入力 JSON の型定義・手順書・例の場所
+bun skills/headless-demo-recorder/scripts/cli.ts check skills/headless-demo-recorder/assets/browser-wikipedia.json   # 検証のみ。何も起動しない
+bun skills/headless-demo-recorder/scripts/cli.ts run skills/headless-demo-recorder/assets/browser-wikipedia.json     # capture → render → inspect
+bun skills/headless-demo-recorder/scripts/cli.ts render out/wikipedia-search.project --edit edit.json --out out/v2.mp4   # 再録画せずに再編集
+bun skills/headless-demo-recorder/scripts/cli.ts run skills/headless-demo-recorder/assets/composition-calc-wiki.json --allow-app com.apple.calculator --allow-origin https://en.wikipedia.org   # 2本を同時に録画して1本に
 ```
 
 ### 複数の録画を同時に行い、1本に結合する（composition）
@@ -92,7 +93,7 @@ bun src/cli.ts run scenarios/composition-calc-wiki.json --allow-app com.apple.ca
 ```json
 {
   "name": "calc-wiki",
-  "scenarios": ["scenarios/desktop-calculator.json", "scenarios/browser-wikipedia.json"],
+  "scenarios": ["skills/headless-demo-recorder/assets/desktop-calculator.json", "skills/headless-demo-recorder/assets/browser-wikipedia.json"],
   "scenes": [
     { "layout": "side-by-side", "streams": [{ "scenario": "calculator" }, { "scenario": "wikipedia-search" }] },
     { "layout": "single", "streams": [{ "scenario": "wikipedia-search" }] }
@@ -108,7 +109,7 @@ bun src/cli.ts run scenarios/composition-calc-wiki.json --allow-app com.apple.ca
 - ズーム・字幕・合成カーソルは各録画から引き継ぐ。ズームの設定と字幕の大きさは参照先の `scenario.edit` が既定値で、`composition.edit` の同名キーで上書きする。`titles` と `style` は composition のみ。`trim`・`idleSpeedupMs`・`speechCaptions`・composition 自体の `edit.redact` は使えない。参照先の `scenario.edit.redact` は録画上の時刻から各場面の時刻へ変換して適用する。
 - ズームは出力全体に1つしか掛からない。左右並べで2本のズームの時刻が重なったときは、先に始まった方を採用し、後の方は捨てる。片方のセルにズームしている間、もう片方のセルはほぼ画面外に出る。
 - 結果 JSON は単一シナリオと同じ形に `projectDirs`（参照先の project）と `startSkewMs` が加わる。合成後の project（`out/<name>.project/`）の `events.json` は派生物で、`render` のたびに上書きされる。手で直すのは参照先の `events.json`。
-- 直すときは `render out/calc-wiki.project --composition scenarios/composition-calc-wiki.json --force`。参照先の録画はそのまま使う。
+- 直すときは `render out/calc-wiki.project --composition skills/headless-demo-recorder/assets/composition-calc-wiki.json --force`。参照先の録画はそのまま使う。
 - 片方の録画開始や file 入力の準備が失敗すると、もう片方もシナリオのステップを実行する前に止める。待ち合わせが120秒を超えた場合も中止する。ページやアプリの起動、録画の開始までは行われることがある。開始後の失敗では、終わった録画は残るが、別の実行で撮り直した録画とは開始時刻を揃えられない（`capture.json` の `runId` が違う録画は位置合わせせずに結合する）。`CAPTURE_PARTIAL_FAILED`（`retry: no`）のときは、アプリの状態を戻してから `run <composition> --force` で全本を撮り直す。
 - 参照先の `scenario.edit` にある `trim` / `idleSpeedupMs` / `speechCaptions` は composition では無視され、`check` が warning を出す。
 
@@ -122,12 +123,12 @@ bun src/cli.ts run scenarios/composition-calc-wiki.json --allow-app com.apple.ca
 
 各コマンドは JSON を1つだけ出力する。失敗時の JSON には `stage`、`code`、`retry`（`safe` / `after-fix` / `no`）、`hint` が入る。
 
-- エージェントの作業手順とガードレール: `AGENTS.md`
+- エージェントの作業手順とガードレール: `skills/headless-demo-recorder/SKILL.md`
 - 設計の根拠: `docs/tool-design-review.md`
 
 ## クックガイド
 
-よくある用途ごとに、AI への頼み方と、AI が書くシナリオの要点を示す。シナリオの形式の全体は `headless-demo-recorder schema`（型定義）と `scenarios/` の例で確かめられる。どのレシピも `check` → `run` → inspect-sheet の目視、の順で進む。
+よくある用途ごとに、AI への頼み方と、AI が書くシナリオの要点を示す。シナリオの形式の全体は `headless-demo-recorder schema`（型定義）と `skills/headless-demo-recorder/assets/` の例で確かめられる。どのレシピも `check` → `run` → inspect-sheet の目視、の順で進む。
 
 ### ウェブページの操作を録る
 > 「https://example.com のサインアップ手順を、入力欄を順に埋める20秒のデモ動画にして」
@@ -208,7 +209,7 @@ bun src/cli.ts run scenarios/composition-calc-wiki.json --allow-app com.apple.ca
 ```bash
 bun install --cwd demo/howto      # 初回のみ（@wterm/dom）。型検査は bun run --cwd demo/howto typecheck
 bun demo/howto/server.ts &        # 127.0.0.1:7681
-bun src/cli.ts run demo/howto/scenario.json --allow-origin http://127.0.0.1:7681 --force
+bun skills/headless-demo-recorder/scripts/cli.ts run demo/howto/scenario.json --allow-origin http://127.0.0.1:7681 --force
 kill %1
 ```
 
@@ -216,11 +217,11 @@ kill %1
 - 端末の WebSocket は、`Origin` が `http://127.0.0.1:7681` の接続だけを受け付ける。書き込みできるシェルなので、普段のブラウザで開いている他のページからは操作できないようにしている。
 - 録画される端末は、利用者の設定ではなく `demo/howto/zdotdir/.zshrc` で起動する。プロンプトにユーザー名やホームのパスは出ず、履歴も保存しない。
 - 端末内の各コマンドは stderr を捨て、出力のパスを `out/` からの相対パスに直して表示する。絶対パスにはホームディレクトリが含まれるためである。
-- 標準の Terminal.app を agent-desktop で操作する方法は取らない。`src/appguard.ts` の拒否リストが Terminal.app への入力を拒否するためである。
+- 標準の Terminal.app を agent-desktop で操作する方法は取らない。`skills/headless-demo-recorder/scripts/appguard.ts` の拒否リストが Terminal.app への入力を拒否するためである。
 
 ## Codex / Claude Code から使う
 
-エージェントはシェルから `bun src/cli.ts <command>`（PATH に通したなら `headless-demo-recorder <command>`）を呼び、stdout の JSON を読んで次の手を決める。作業手順とガードレールの正本は `AGENTS.md` で、Codex はこれをそのまま読む。Claude Code は `CLAUDE.md`（中身は `@AGENTS.md` の1行）を経由して同じ内容を読む。
+エージェントはシェルから `bun skills/headless-demo-recorder/scripts/cli.ts <command>`（PATH に通したなら `headless-demo-recorder <command>`）を呼び、stdout の JSON を読んで次の手を決める。作業手順とガードレールの正本は `skills/headless-demo-recorder/SKILL.md` で、Claude Code と Codex はこれをスキルとして読む。リポジトリ直下の `AGENTS.md`（Claude Code は `CLAUDE.md` 経由）は開発者向けの短い案内だけを持つ。
 
 使う前に、次を利用者が済ませておく。
 
@@ -230,17 +231,14 @@ kill %1
 
 ### 別のプロジェクトから使う
 
-1. コマンドを PATH に通す。`src/cli.ts` は `#!/usr/bin/env bun` で始まり、実行時の依存パッケージは無い。
-   ```bash
-   ln -s <このリポジトリ>/src/cli.ts ~/.local/bin/headless-demo-recorder   # PATH 上の任意のディレクトリ
-   headless-demo-recorder doctor
-   ```
-   `bun link` も使えるが、登録先の `~/.bun/bin` が PATH に無いと呼べない。
-2. エージェントに手順を渡す。`AGENTS.md` はこのリポジトリを開いたときにしか読まれないので、リポジトリ内のスキル（`skills/headless-demo-recorder/SKILL.md`）をユーザー単位のスキルとして読ませる。スキルは `schema` が返す `AGENTS.md` を読むよう指示している。
+1. スキルのディレクトリ（`skills/headless-demo-recorder`。CLI の `scripts/` と例の `assets/` を含む）を導入の単位として、ユーザー単位のスキルに置く。シンボリックリンクにするか、ディレクトリごとコピーする。CLI は実行時の依存パッケージを持たず、bun があれば動く。
    ```bash
    ln -s <このリポジトリ>/skills/headless-demo-recorder ~/.claude/skills/headless-demo-recorder
    ln -s <このリポジトリ>/skills/headless-demo-recorder ~/.codex/skills/headless-demo-recorder
+   bun <このリポジトリ>/skills/headless-demo-recorder/scripts/cli.ts doctor
    ```
+   エージェントは `bun <skill-dir>/scripts/cli.ts <command>` で呼ぶ。人が手で叩くなら、任意で PATH 上に `exec bun <このリポジトリ>/skills/headless-demo-recorder/scripts/cli.ts "$@"` だけのラッパー `headless-demo-recorder` を置いてもよい。
+2. エージェントに手順を渡す。スキルの `SKILL.md` が作業手順とガードレールそのものなので、1 のリンクを置けば別のプロジェクトでも読まれる。
 3. 使う側のプロジェクトでは、シナリオ内のパスがカレントディレクトリからの相対になる。出力先（例: `out/`）を `.gitignore` に入れる。入力の形式はエージェントが `headless-demo-recorder schema` で確かめる。
 
 ### 任意指定の防御
@@ -248,7 +246,7 @@ kill %1
 `check`、`capture`、`run` は次のフラグを受け付ける。指定しなければ制限はかからない。
 
 - `--allow-origin <scheme://host:port>`（複数可）: シナリオ内の URL がすべて一致することを確認し、browser の通信先をこれらのホストに限る（agent-browser の `--allowed-domains`）。
-- `--allow-app <bundleId>`（複数可）: desktop の入力先をこれらのアプリに限る。`src/appguard.ts` の拒否リスト（Chrome、Safari、Edge、Firefox 系、Terminal.app、Finder、システム設定。前方一致）に当たるアプリは、指定の有無にかかわらず拒否する。それ以外のブラウザやターミナル（Brave、Arc、iTerm2 など）は拒否リストに無い。
+- `--allow-app <bundleId>`（複数可）: desktop の入力先をこれらのアプリに限る。`skills/headless-demo-recorder/scripts/appguard.ts` の拒否リスト（Chrome、Safari、Edge、Firefox 系、Terminal.app、Finder、システム設定。前方一致）に当たるアプリは、指定の有無にかかわらず拒否する。それ以外のブラウザやターミナル（Brave、Arc、iTerm2 など）は拒否リストに無い。
 
 > 警告: `--allow-origin http://127.0.0.1:<port>` を許可すると、実行中はポートを区別できないため、ページの JS から**そのホスト上の他のローカルサービス（管理画面など）にも届きうる**。
 
@@ -263,5 +261,5 @@ kill %1
 - 1プロセスで同時に録画できるのは composition の2本まで。別プロセスの `run` の同時実行や、同じシナリオを参照する2つの composition の同時実行は、ロックが無いため project dir を壊しうる。
 - `openscreen record` は録画をアプリのフォルダ（macOS では `~/Library/Application Support/openscreen/recordings/`）に書く。desktop の capture は、録画が終わるとその動画・カーソル情報・session ファイルを project の `work/` に移す（`--keep-work` を付けなければ work ごと消える）。アプリの `media-links.registry.json` には参照が残るが、書き換えない。
 - desktop の録画は同時に2本録れる（`openscreen record --window` はウィンドウ単位で、重なっていても個別に録れる）。ヘッドレスの `fill` / `press` はアクセシビリティ API で対象要素に直接届くため、もう一方のアプリの操作や前面化で文字が欠けることはなかった（2026-11 実測: TextEdit への入力と計算機のクリック・前面化を同時に各3回、欠落なし。`.omc/research/ac3-desktop-typing.md`）。
-- agent-browser（0.41.1 で確認）は `--allowed-domains` の指定時に `window.WebSocket` を差し替えるが、`WebSocket.OPEN` などの定数を引き継がない。`readyState === WebSocket.OPEN` を確かめてから送信するページ（ttyd など）は、何も送信できなくなる。`--allow-origin` を指定したときは、`src/capture/ws-constants.js` を初期化スクリプトとして差し込んで定数を補う。
+- agent-browser（0.41.1 で確認）は `--allowed-domains` の指定時に `window.WebSocket` を差し替えるが、`WebSocket.OPEN` などの定数を引き継がない。`readyState === WebSocket.OPEN` を確かめてから送信するページ（ttyd など）は、何も送信できなくなる。`--allow-origin` を指定したときは、`skills/headless-demo-recorder/scripts/capture/ws-constants.js` を初期化スクリプトとして差し込んで定数を補う。
 - 書き出しでは OpenScreen が余白と背景を付けるため、出力の解像度とフレームレートは入力と一致しない（例: 1280x720・30fps → 1784x1080・60fps）。
