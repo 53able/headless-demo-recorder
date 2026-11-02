@@ -46,8 +46,9 @@ const alive = (pid: number) => {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (e) {
+    // EPERM: the process exists but may not be signalled from here (e.g. a Codex sandbox).
+    return (e as NodeJS.ErrnoException).code === "EPERM";
   }
 };
 
@@ -126,7 +127,8 @@ export async function request(projDir: string, req: Request, timeoutMs: number):
     sock.on("data", (d) => (buf += d));
     sock.on("error", (e) => {
       clearTimeout(timer);
-      reject(new ToolError("capture", "SESSION_UNREACHABLE", `cannot reach the session server: ${e.message}`, "no", `see ${logPath(projDir)}`));
+      reject(new ToolError("capture", "SESSION_UNREACHABLE", `cannot reach the session server: ${e.message}`, "no",
+        `a Codex sandbox (workspace-write) cannot connect to the session's socket: run session commands outside the sandbox. Otherwise see ${logPath(projDir)}`));
     });
     sock.on("end", () => {
       clearTimeout(timer);
