@@ -15,7 +15,7 @@ type Box = { x: number; y: number; width: number; height: number };
 /** Drive a page with agent-browser while it records WebM, logging element boxes per action. */
 export async function captureBrowser(src: BrowserSource, steps: Step[], workDir: string, opts: BrowserOptions = {}): Promise<CaptureResult> {
   const [vw, vh] = src.viewport ?? [1280, 720];
-  const session = opts.sessionName ?? `capture-agent-${process.pid}-${Date.now()}`;
+  const session = opts.sessionName ?? `headless-demo-recorder-${process.pid}-${Date.now()}`;
   if (!opts.allowOrigins?.length) log("warning: no --allow-origin given; the browser may reach any host");
   // Every invocation carries the same restriction, including record stop/close.
   const base = ["--session", session, ...(opts.allowOrigins?.length ? ["--allowed-domains", allowedDomains(opts.allowOrigins)] : [])];

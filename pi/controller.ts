@@ -374,7 +374,7 @@ export class RunController {
         let scenarioPath = v.path;
         if (v.secrets.size) {
           // Real values never touch runs/<id>/: a private temp copy outside the run dir.
-          tmp = await mkdtemp(join(tmpdir(), "capture-agent-"));
+          tmp = await mkdtemp(join(tmpdir(), "headless-demo-recorder-"));
           const real = structuredClone(v.scenario);
           for (const [i, value] of v.secrets) {
             const s = real.steps?.[i];

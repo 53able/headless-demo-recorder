@@ -1,4 +1,4 @@
-# AIインターフェース設計／レビュー: capture-agent CLI（エージェント向けツール面）
+# AIインターフェース設計／レビュー: headless-demo-recorder CLI（エージェント向けツール面）
 
 ## 1. 結論
 
