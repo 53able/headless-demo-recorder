@@ -1,0 +1,70 @@
+{
+  "name": "calculator",
+  "source": {
+    "type": "desktop",
+    "app": "Calculator",
+    "launch": true
+  },
+  "steps": [
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "すべて消去",
+        "exact": true
+      },
+      "caption": "クリア",
+      "allowDestructive": true
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "7",
+        "exact": true
+      },
+      "caption": "7"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "加算",
+        "exact": true
+      },
+      "caption": "+"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "8",
+        "exact": true
+      },
+      "caption": "8"
+    },
+    {
+      "action": "click",
+      "target": {
+        "role": "button",
+        "name": "計算実行",
+        "exact": true
+      },
+      "caption": "= 15",
+      "waitMs": 1500
+    }
+  ],
+  "edit": {
+    "zoom": {
+      "depth": 2,
+      "holdMs": 1200,
+      "mergeDistance": 0.6
+    },
+    "captionFontSize": 40
+  },
+  "output": {
+    "path": "out/calculator.gif",
+    "gifFps": 20,
+    "gifSize": "medium"
+  }
+}

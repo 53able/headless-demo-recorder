@@ -1,0 +1,32 @@
+{
+  "name": "wikipedia-reedit",
+  "source": {
+    "type": "file",
+    "path": "out/wikipedia-search.project/capture.mp4",
+    "events": "out/wikipedia-search.project/events.json"
+  },
+  "edit": {
+    "idleSpeedupMs": 1000,
+    "idleSpeed": 3,
+    "redact": [
+      {
+        "rect": {
+          "x": 0.75,
+          "y": 0.0,
+          "w": 0.25,
+          "h": 0.06
+        },
+        "startMs": 0,
+        "endMs": 8000
+      }
+    ],
+    "style": {
+      "padding": 20,
+      "borderRadius": 12
+    }
+  },
+  "output": {
+    "path": "out/wikipedia-reedit.mp4",
+    "quality": "medium"
+  }
+}

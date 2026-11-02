@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>デモアプリ - ホーム</title><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;color:#222}h1{font-size:28px}input,button{font-size:18px;padding:8px 12px;margin:4px 0}button{cursor:pointer}li{margin:8px 0}#toast{position:fixed;bottom:24px;right:24px;background:#222;color:#fff;padding:12px 20px;border-radius:8px;display:none}</style></head>
+<body>
+<h1 id="title">デモアプリ</h1>
+<p>商品を検索します。</p>
+<form id="search" action="results.html" method="get">
+  <input id="q" name="q" type="text" placeholder="検索キーワード" aria-label="検索キーワード">
+  <button id="go" type="submit">検索</button>
+</form>
+<p><a id="external" href="https://example.com">外部サイト</a></p>
+<p><button id="leak" type="button">疎通確認</button> <span id="leak-status"></span></p>
+<script>
+document.getElementById('leak').addEventListener('click', function () {
+  var port = new URLSearchParams(location.search).get('otherPort') || '0';
+  var s = document.getElementById('leak-status');
+  fetch('http://127.0.0.1:' + port + '/ping', { mode: 'no-cors' })
+    .then(function () { s.textContent = 'sent'; })
+    .catch(function () { s.textContent = 'blocked'; });
+});
+</script>
+</body></html>

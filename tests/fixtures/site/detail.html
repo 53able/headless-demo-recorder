@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>デモアプリ - 設定</title><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;color:#222}h1{font-size:28px}input,button{font-size:18px;padding:8px 12px;margin:4px 0}button{cursor:pointer}li{margin:8px 0}#toast{position:fixed;bottom:24px;right:24px;background:#222;color:#fff;padding:12px 20px;border-radius:8px;display:none}</style></head>
+<body>
+<h1 id="title">設定</h1>
+<form id="settings" onsubmit="return false">
+  <label for="name">表示名（秘密情報の候補）</label><br>
+  <input id="name" name="name" type="text" data-secret="true" autocomplete="off"><br>
+  <button id="save" type="button">保存</button>
+</form>
+<div id="toast" role="status">保存しました</div>
+<p><a id="back" href="index.html">ホームへ戻る</a></p>
+<script>
+document.getElementById('save').addEventListener('click', function () {
+  var t = document.getElementById('toast');
+  t.style.display = 'block';
+  setTimeout(function () { t.style.display = 'none'; }, 2000);
+});
+</script>
+</body></html>

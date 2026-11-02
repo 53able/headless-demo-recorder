@@ -1,0 +1,60 @@
+import { expect, test } from "bun:test";
+import { validateScenario } from "./validate.ts";
+
+const base = { name: "demo", source: { type: "browser", url: "https://example.com" }, output: { path: "out/demo.mp4" } };
+const errors = (s: unknown) => validateScenario(s).filter((i) => i.level === "error").map((i) => i.path);
+
+test("a minimal browser scenario is valid", () => {
+  expect(errors(base)).toEqual([]);
+});
+
+test("irreversible-looking steps need allowDestructive", () => {
+  const s = { ...base, steps: [{ action: "click", target: "text=Delete account" }, { action: "click", target: "button:has-text(\"送信\")" }] };
+  expect(errors(s)).toEqual(["steps[0]", "steps[1]"]);
+  expect(errors({ ...s, allowDestructive: true })).toEqual([]);
+  // A per-step acknowledgement clears only that step.
+  const acked = { ...s, steps: [{ ...s.steps[0], allowDestructive: true }, s.steps[1]] };
+  expect(errors(acked)).toEqual(["steps[1]"]);
+});
+
+test("source-specific mistakes are reported with their path", () => {
+  expect(errors({ ...base, steps: [{ action: "click", target: "@e3" }] })).toEqual(["steps[0].target"]);
+  expect(errors({ ...base, source: { type: "desktop", app: "Notes" }, steps: [{ action: "scroll" }] })).toEqual(["steps[0].action"]);
+  expect(errors({ ...base, output: { path: "out/demo.mov" } })).toEqual(["output.path"]);
+  expect(errors({ ...base, steps: [{ action: "fill", target: "#q" }] })).toEqual(["steps[0].value"]);
+});
+
+const urlErrors = (s: unknown, opts?: Parameters<typeof validateScenario>[1]) =>
+  validateScenario(s, opts).filter((i) => i.level === "error").map((i) => i.path);
+
+test("every URL must be http(s)", () => {
+  for (const url of ["file:///etc/passwd", "chrome://settings", "javascript:alert(1)", "ftp://example.com", "not a url"]) {
+    expect(urlErrors({ ...base, source: { type: "browser", url } })).toEqual(["source.url"]);
+    expect(urlErrors({ ...base, steps: [{ action: "open", url }] })).toEqual(["steps[0].url"]);
+  }
+});
+
+test("allowOrigins matches scheme, host and port", () => {
+  const opts = { allowOrigins: ["https://example.com", "http://127.0.0.1:4173"] };
+  expect(urlErrors(base, opts)).toEqual([]);
+  // Default ports are normalized on both sides.
+  expect(urlErrors({ ...base, source: { type: "browser", url: "https://example.com:443/a?b" } }, opts)).toEqual([]);
+  expect(urlErrors({ ...base, source: { type: "browser", url: "http://127.0.0.1:4173/" } }, opts)).toEqual([]);
+  expect(urlErrors({ ...base, source: { type: "browser", url: "https://evil.example.org" } }, opts)).toEqual(["source.url"]);
+  expect(urlErrors({ ...base, source: { type: "browser", url: "http://example.com" } }, opts)).toEqual(["source.url"]);
+  expect(urlErrors({ ...base, source: { type: "browser", url: "http://127.0.0.1:8080" } }, opts)).toEqual(["source.url"]);
+  expect(urlErrors({ ...base, steps: [{ action: "open", url: "https://example.com.evil.org/" }] }, opts)).toEqual(["steps[0].url"]);
+  // An empty allowlist allows nothing; a malformed entry is itself an error.
+  expect(urlErrors(base, { allowOrigins: [] })).toEqual(["source.url"]);
+  expect(urlErrors(base, { allowOrigins: ["example.com"] })).toEqual(["allowOrigins", "source.url"]);
+});
+
+test("controller mode rejects string refs, trims and idle speed-ups", () => {
+  const desk = { ...base, source: { type: "desktop", app: "Calculator" }, steps: [{ action: "click", target: "@e1" }, { action: "click", target: { role: "button", name: "1" } }] };
+  expect(urlErrors(desk)).toEqual([]);
+  expect(urlErrors(desk, { controllerMode: true })).toEqual(["steps[0].target"]);
+  const edited = { ...base, edit: { trim: [{ startMs: 0, endMs: 100 }], idleSpeedupMs: 1500 } };
+  expect(urlErrors(edited)).toEqual([]);
+  expect(urlErrors(edited, { controllerMode: true })).toEqual(["edit.trim", "edit.idleSpeedupMs"]);
+  expect(urlErrors({ ...base, edit: { trim: [], idleSpeedupMs: 0 } }, { controllerMode: true })).toEqual([]);
+});
