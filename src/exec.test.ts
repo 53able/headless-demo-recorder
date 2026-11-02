@@ -62,3 +62,11 @@ test("toMp4Args puts -ss before -i only when startMs > 0", () => {
   expect(trimmed[trimmed.indexOf("-ss") + 1]).toBe("1.5");
   expect(trimmed.indexOf("-ss")).toBeLessThan(trimmed.indexOf("-i"));
 });
+
+test("barrier.fail rejects waiting and later parties", async () => {
+  const g = barrier(2, 10_000);
+  const waiting = g.arrive();
+  g.fail(new Error("a failed first"));
+  await expect(waiting).rejects.toThrow("a failed first");
+  await expect(g.arrive()).rejects.toThrow("a failed first");
+});

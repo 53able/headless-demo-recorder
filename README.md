@@ -76,7 +76,8 @@ bun src/cli.ts run scenarios/composition-calc-wiki.json --allow-app com.apple.ca
 - ズームは出力全体に1つしか掛からない。左右並べで2本のズームの時刻が重なったときは、先に始まった方を採用し、後の方は捨てる。片方のセルにズームしている間、もう片方のセルはほぼ画面外に出る。
 - 結果 JSON は単一シナリオと同じ形に `projectDirs`（参照先の project）と `startSkewMs` が加わる。合成後の project（`out/<name>.project/`）の `events.json` は派生物で、`render` のたびに上書きされる。手で直すのは参照先の `events.json`。
 - 直すときは `render out/calc-wiki.project --composition scenarios/composition-calc-wiki.json --force`。参照先の録画はそのまま使う。
-- 片方の録画だけ失敗すると `CAPTURE_PARTIAL_FAILED`（`retry: no`）を返し、成功した録画は残す。失敗したシナリオを単体で `capture --force` し直してから、上の `render` で結合する。
+- 片方の録画が**録画開始前**に失敗すると、もう片方も開始前に止める（実アプリを片方だけ操作し続けない）。開始後の失敗では、終わった録画は残るが、別の実行で撮り直した録画とは開始時刻を揃えられない（`capture.json` の `runId` が違う録画は位置合わせせずに結合する）。`CAPTURE_PARTIAL_FAILED`（`retry: no`）のときは、アプリの状態を戻してから `run <composition> --force` で全本を撮り直す。
+- 参照先の `scenario.edit` にある `trim` / `idleSpeedupMs` / `speechCaptions` / `redact` は composition では無視され、`check` が warning を出す。
 
 `capture` は書き出しより先に、`out/<name>.project/` へ次の3つを保存する。
 

@@ -143,24 +143,29 @@ export async function toMp4(input: string, output: string, opts: { startMs?: num
 
 /** Rendezvous for `n` parallel captures. `leave()` counts a party that will never arrive.
  * Releases on timeout too (with a warning) so one stuck capture cannot hang the others. */
-export function barrier(n: number, timeoutMs: number): { arrive(): Promise<void>; leave(): void } {
+export function barrier(n: number, timeoutMs: number): { arrive(): Promise<void>; leave(): void; fail(reason: unknown): void } {
   let count = 0;
-  const waiters: (() => void)[] = [];
-  const release = () => waiters.splice(0).forEach((w) => w());
+  let failed: unknown;
+  const waiters: { resolve(): void; reject(e: unknown): void }[] = [];
+  const release = () => waiters.splice(0).forEach((w) => w.resolve());
   const bump = () => {
     if (++count >= n) release();
   };
   return {
     arrive() {
       if (abortSignal.aborted) return Promise.reject(abortSignal.reason);
+      if (failed !== undefined) return Promise.reject(failed);
       return new Promise<void>((resolve, reject) => {
-        const done = () => {
+        const settle = () => {
           clearTimeout(timer);
           abortSignal.removeEventListener("abort", onAbort);
+        };
+        const done = () => {
+          settle();
           resolve();
         };
         const onAbort = () => {
-          clearTimeout(timer);
+          settle();
           reject(abortSignal.reason);
         };
         const timer = setTimeout(() => {
@@ -168,10 +173,15 @@ export function barrier(n: number, timeoutMs: number): { arrive(): Promise<void>
           done();
         }, timeoutMs);
         abortSignal.addEventListener("abort", onAbort, { once: true });
-        waiters.push(done);
+        waiters.push({ resolve: done, reject: (e) => (settle(), reject(e)) });
         bump();
       });
     },
     leave: bump,
+    /** A party failed before arriving: everyone waiting (or arriving later) is rejected instead of recording alone. */
+    fail(reason) {
+      failed = reason;
+      waiters.splice(0).forEach((w) => w.reject(reason));
+    },
   };
 }

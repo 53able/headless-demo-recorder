@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
 import { compileEditor, type ZoomRegion } from "./compile.ts";
-import { alignLeadMs, composeEditor, compositeArgs, fitRect, planScenes, resolveZoomConflicts, type AlignedCapture } from "./compose.ts";
+import { alignLeadMs, composeEditor, compositeArgs, emptyStreams, fitRect, planScenes, resolveZoomConflicts, type AlignedCapture } from "./compose.ts";
 import type { ActionEvent, Composition } from "./types.ts";
 
 const click = (tMs: number, cx: number, cy: number, extra: Partial<ActionEvent> = {}): ActionEvent => ({
   tMs, kind: "click", point: { cx, cy }, rect: { x: cx - 0.02, y: cy - 0.02, w: 0.04, h: 0.04 }, ...extra,
 });
-const cap = (width: number, height: number, durationMs: number, events: ActionEvent[], t0EpochMs?: number): AlignedCapture => ({
-  videoPath: "x.mp4", width, height, durationMs, events, realCursor: false, ...(t0EpochMs !== undefined && { t0EpochMs }),
+const cap = (width: number, height: number, durationMs: number, events: ActionEvent[], t0EpochMs?: number, runId = "r1"): AlignedCapture => ({
+  videoPath: "x.mp4", width, height, durationMs, events, realCursor: false, ...(t0EpochMs !== undefined && { t0EpochMs, runId }),
 });
 const comp = (scenes: Composition["scenes"], edit?: Composition["edit"]): Composition => ({ name: "c", scenarios: ["a.json", "b.json"], scenes, edit, output: { path: "out/c.mp4" } });
 const zoom = (startMs: number, endMs: number, cx: number): ZoomRegion => ({ id: "z", startMs, endMs, depth: 3, focus: { cx, cy: 0.5 }, focusMode: "manual", source: "manual" });
@@ -21,9 +21,11 @@ test("fitRect letterboxes to integer, even sizes", () => {
   }
 });
 
-test("alignLeadMs measures each start against the latest; missing t0 is 0", () => {
+test("alignLeadMs measures each start against the latest; missing t0 or a different run is 0", () => {
   expect(alignLeadMs({ a: cap(10, 10, 1000, [], 1000), b: cap(10, 10, 1000, [], 1300) })).toEqual({ a: 300, b: 0 });
   expect(alignLeadMs({ a: cap(10, 10, 1000, []), b: cap(10, 10, 1000, []) })).toEqual({ a: 0, b: 0 });
+  // Re-captured ten minutes later on its own: aligning by wall clock would empty the other segment.
+  expect(alignLeadMs({ a: cap(10, 10, 1000, [], 1000, "r1"), b: cap(10, 10, 1000, [], 601000, "r2") })).toEqual({ a: 0, b: 0 });
 });
 
 test("segment-local time subtracts start and lead", () => {
@@ -88,4 +90,22 @@ test("compositeArgs: one input per scene stream, hstack per side-by-side, one co
   expect(f).toContain("[v0][v1]hstack=inputs=2[sc0]");
   expect(f).toContain("[sc0][v2]concat=n=2:v=1:a=0[out]");
   expect(args.at(-1)).toBe("out.mp4");
+});
+
+test("a redact event before the segment still blurs the whole segment, without zoom or cursor", () => {
+  const ev = [click(1000, 0.5, 0.5, { redact: true }), click(6000, 0.3, 0.3, { caption: "later" })];
+  const c = comp([{ layout: "single", streams: [{ scenario: "a", startMs: 5000 }] }]);
+  const { patch, events } = composeEditor(c, { a: cap(1280, 800, 10000, ev) }, { a: {} });
+  const blur = patch.annotationRegions.filter((a) => a.type === "blur");
+  expect(blur).toHaveLength(1);
+  expect(blur[0]!.startMs).toBe(0);
+  expect(patch.zoomRegions.map((z) => z.focus.cx)).toEqual([0.3 * (1728 / 1920) + 96 / 1920]); // only the 6000ms click zooms, mapped into the letterboxed content
+  expect(events.filter((e) => e.point)).toHaveLength(1);
+});
+
+test("emptyStreams names a stream whose startMs is past the recording end", () => {
+  const c = comp([{ layout: "single", streams: [{ scenario: "a", startMs: 20000 }] }]);
+  const scenes = planScenes(c, { a: cap(1280, 800, 10000, []) });
+  expect(emptyStreams(scenes)).toEqual(["scenes[0] a"]);
+  expect(scenes[0]!.streams[0]!.end).toBe(20000); // clamped to start, never negative
 });

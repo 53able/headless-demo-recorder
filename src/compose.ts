@@ -26,12 +26,20 @@ export function fitRect(srcW: number, srcH: number, cellPx: { w: number; h: numb
   return { x: Math.floor((cellPx.w - w) / 2), y: Math.floor((cellPx.h - h) / 2), w, h };
 }
 
-/** How much later each recording started than the last one to start. Missing t0EpochMs → 0. */
+/** How much later each recording started than the last one to start. Only captures from one
+ * composition run (same `runId`) are aligned; anything else (re-captured alone, recorded on a
+ * different day) gets 0 — a wall-clock difference of minutes would empty the segment. */
 export function alignLeadMs(captures: Record<string, AlignedCapture>): Record<string, number> {
-  const t0s = Object.values(captures).map((c) => c.t0EpochMs).filter((t): t is number => t !== undefined);
-  const latest = Math.max(...t0s);
-  return Object.fromEntries(Object.entries(captures).map(([n, c]) => [n, c.t0EpochMs === undefined ? 0 : latest - c.t0EpochMs]));
+  const caps = Object.values(captures);
+  const sameRun = caps.every((c) => c.runId !== undefined && c.t0EpochMs !== undefined && c.runId === caps[0]!.runId);
+  if (!sameRun) return Object.fromEntries(Object.keys(captures).map((n) => [n, 0]));
+  const latest = Math.max(...caps.map((c) => c.t0EpochMs!));
+  return Object.fromEntries(Object.entries(captures).map(([n, c]) => [n, latest - c.t0EpochMs!]));
 }
+
+/** Streams whose segment is empty (startMs past the aligned end); ffmpeg would silently emit no frames. */
+export const emptyStreams = (scenes: ScenePlan[]) =>
+  scenes.flatMap((sc, i) => sc.streams.filter((s) => s.end <= s.start).map((s) => `scenes[${i}] ${s.scenario}`));
 
 const cellPx = (cell: NRect, [W, H]: Size) => ({ w: Math.round(cell.w * W), h: Math.round(cell.h * H) });
 
@@ -64,7 +72,8 @@ export function planScenes(comp: Composition, captures: Record<string, AlignedCa
 export const mapPoint = (p: NPoint, r: NRect): NPoint => ({ cx: r.x + p.cx * r.w, cy: r.y + p.cy * r.h });
 export const mapRect = (q: NRect, r: NRect): NRect => ({ x: r.x + q.x * r.w, y: r.y + q.y * r.h, w: q.w * r.w, h: q.h * r.h });
 
-/** The output has one zoom at a time: first come wins (ties → left cell, i.e. smaller cx); later overlaps are dropped, not cut. */
+/** The output has one zoom at a time: first come wins (ties → left cell, i.e. smaller cx); later overlaps are dropped, not cut.
+ * ponytail: a long merged zoom on one cell hides every zoom on the other; trim instead of drop if that bites. */
 export function resolveZoomConflicts(zooms: ZoomRegion[]): ZoomRegion[] {
   const out: ZoomRegion[] = [];
   for (const z of [...zooms].sort((a, b) => a.startMs - b.startMs || a.focus.cx - b.focus.cx)) {
@@ -99,9 +108,11 @@ export function composeEditor(
       const cap = captures[st.scenario]!;
       const from = st.start + st.lead;
       const segLen = st.end - st.start;
-      const local = normalizeEvents(cap.events, cap.durationMs)
-        .filter((e) => e.tMs >= from && e.tMs < st.end + st.lead)
-        .map((e) => ({ ...e, tMs: e.tMs - from }));
+      const all = normalizeEvents(cap.events, cap.durationMs);
+      const local = all.filter((e) => e.tMs >= from && e.tMs < st.end + st.lead).map((e) => ({ ...e, tMs: e.tMs - from }));
+      // A redaction blurs from its event to the end of the recording, so one before the segment
+      // still applies to all of it. Carry it as a bare mark: no point (no zoom/cursor), no caption.
+      for (const e of all) if (e.redact && e.rect && e.tMs < from) local.unshift({ tMs: 0, kind: "mark", rect: e.rect, redact: true });
       // titles/style come only from the composition; scenario.edit supplies per-stream defaults.
       const plan: EditPlan = { ...scenarioEdits[st.scenario], ...comp.edit, titles: [] };
       const fontSize = sc.layout === "side-by-side" ? Math.round((plan.captionFontSize ?? 64) * 0.6) : plan.captionFontSize; // ponytail: 0.6 by eye; tune with captionFontSize if captions overflow

@@ -26,6 +26,8 @@ export type CaptureResult = {
   realCursor: boolean;
   /** Wall-clock time of video t=0; aligns parallel captures. */
   t0EpochMs?: number;
+  /** Set by a composition run; captures from different runs are joined without time alignment. */
+  runId?: string;
 };
 
 // ---- Scenario (what an LLM agent writes) ----

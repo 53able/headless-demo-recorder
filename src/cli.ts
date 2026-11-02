@@ -5,7 +5,7 @@ import { captureBrowser } from "./capture/browser.ts";
 import { captureDesktop } from "./capture/desktop.ts";
 import { captureFile } from "./capture/file.ts";
 import { compileEditor } from "./compile.ts";
-import { buildComposite, composeEditor, DEFAULT_SIZE } from "./compose.ts";
+import { buildComposite, composeEditor, DEFAULT_SIZE, emptyStreams } from "./compose.ts";
 import { doctor } from "./doctor.ts";
 import { ToolError, asToolError } from "./errors.ts";
 import { barrier, log, requestAbort } from "./exec.ts";
@@ -122,6 +122,8 @@ async function compositionIssues(raw: unknown, f: Flags): Promise<{ issues: Issu
       continue;
     }
     issues.push(...(await scenarioIssues(s, f)).map((x) => ({ ...x, path: `scenarios[${i}](${p}).${x.path}` })));
+    const ignored = ["trim", "idleSpeedupMs", "idleSpeed", "speechCaptions", "redact"].filter((k) => (s as Scenario).edit && k in (s as Scenario).edit!);
+    if (ignored.length) issues.push({ path: `scenarios[${i}](${p}).edit`, level: "warning", message: `${ignored.join(", ")} is ignored in a composition` });
     scenarios.push(s as Scenario);
   }
   const names = scenarios.map((s) => (typeof s?.name === "string" ? s.name : undefined));
@@ -150,7 +152,7 @@ async function loadComposition(path: string, f: Flags): Promise<{ comp: Composit
   return { comp: raw as Composition, scenarios, warnings: issues.filter((i) => i.level === "warning").map((i) => `${i.path}: ${i.message}`) };
 }
 
-async function doCapture(scenario: Scenario, f: Flags, extra: { sessionName?: string; ready?: () => Promise<void> } = {}): Promise<{ projDir: string; capture: CaptureResult }> {
+async function doCapture(scenario: Scenario, f: Flags, extra: { sessionName?: string; ready?: () => Promise<void>; runId?: string } = {}): Promise<{ projDir: string; capture: CaptureResult }> {
   const projDir = projectDirFor(scenario);
   if ((await exists(join(projDir, "capture.json"))) && !f.force) {
     throw new ToolError("capture", "CAPTURE_EXISTS", `${projDir} already has a capture`, "after-fix", `re-edit it with: render ${projDir} --scenario <file> (or pass --force to record again)`);
@@ -172,7 +174,7 @@ async function doCapture(scenario: Scenario, f: Flags, extra: { sessionName?: st
   }
   const video = join(projDir, "capture.mp4");
   await rename(capture.videoPath, video);
-  capture = { ...capture, videoPath: video };
+  capture = { ...capture, videoPath: video, ...(extra.runId ? { runId: extra.runId } : {}) };
   await writeFile(join(projDir, "capture.json"), JSON.stringify(capture, null, 2));
   await writeFile(join(projDir, "events.json"), JSON.stringify(capture.events, null, 2));
   if (!f.keepWork) await rm(work, { recursive: true, force: true });
@@ -202,8 +204,15 @@ async function editInputs(f: Flags, projDir: string): Promise<{ name: string; pl
   return { name, plan, output: { ...(sc?.output ?? {}), path: outPath } };
 }
 
+/** `<compProj>` already holds a single-scenario recording (capture without composition.json): refuse to overwrite it. */
+async function assertCompositeDir(compProj: string, stage: "validate" | "render") {
+  if ((await exists(join(compProj, "capture.json"))) && !(await exists(join(compProj, "composition.json")))) {
+    throw new ToolError(stage, "PROJECT_COLLISION", `${compProj} holds a single-scenario capture`, "after-fix", "change the composition's output.path; nothing was launched");
+  }
+}
+
 /** Record every referenced scenario at once; recording starts together at the barrier. */
-async function captureAll(scenarios: Scenario[], f: Flags, retryRender: string): Promise<{ projectDirs: string[]; startSkewMs: number }> {
+async function captureAll(scenarios: Scenario[], f: Flags, compositionArg: string, retryRender: string): Promise<{ projectDirs: string[]; startSkewMs: number; warnings: string[] }> {
   const projectDirs = scenarios.map(projectDirFor);
   // Check all before launching anything: a half-started parallel capture is the costly failure.
   if (!f.force) {
@@ -217,29 +226,38 @@ async function captureAll(scenarios: Scenario[], f: Flags, retryRender: string):
   const settled = await Promise.allSettled(scenarios.map(async (s) => {
     let arrived = false;
     try {
-      return await doCapture(s, f, { sessionName: `${base}-${s.name}`, ready: () => ((arrived = true), gate.arrive()) });
+      return await doCapture(s, f, { sessionName: `${base}-${s.name}`, runId: base, ready: () => ((arrived = true), gate.arrive()) });
+    } catch (e) {
+      // Failed before recording: stop the others at the barrier rather than let them act alone.
+      if (!arrived && s.source.type !== "file") gate.fail(new Error(`${s.name} failed before recording started`));
+      throw e;
     } finally {
-      if (!arrived) gate.leave(); // failed before the barrier, or a file source that never waits
+      if (!arrived) gate.leave(); // a file source never waits at the barrier
     }
   }));
   const failed = settled.flatMap((r, i) => (r.status === "rejected" ? [{ name: scenarios[i]!.name, error: asToolError(r.reason, "capture") }] : []));
   if (failed.length) {
     throw new ToolError("capture", "CAPTURE_PARTIAL_FAILED", failed.map((x) => `${x.name}: [${x.error.code}] ${x.error.message}`).join("\n"), "no",
-      `the other recordings are kept. Reset the app state, then capture the failed scenario(s) with --force, then: ${retryRender}`,
+      `recordings that finished are kept but cannot be time-aligned with a later re-capture. Reset the app state, then record all of them again: run ${compositionArg} --force`,
       { failed: failed.map((x) => x.name).join(","), projectDirs: projectDirs.join(",") });
   }
   const t0s = settled.map((r) => (r.status === "fulfilled" ? r.value.capture.t0EpochMs : undefined));
   const startSkewMs = t0s.every((t) => t !== undefined) ? Math.max(...(t0s as number[])) - Math.min(...(t0s as number[])) : 0;
-  return { projectDirs, startSkewMs };
+  const warnings = startSkewMs > 1000 ? [`recordings started ${startSkewMs}ms apart (barrier timed out?); side-by-side scenes may be misaligned`] : [];
+  return { projectDirs, startSkewMs, warnings };
 }
 
 /** Join the referenced captures into `<compProj>/capture.mp4` and export it. Never records. */
 async function renderComposition(compProj: string, comp: Composition, compPath: string, scenarios: Scenario[], f: Flags) {
   const outPath = resolve(comp.output.path);
   if (!f.force && (await exists(outPath))) throw new ToolError("render", "OUTPUT_EXISTS", `${outPath} already exists`, "after-fix", "pass --force to overwrite, or change output.path");
+  await assertCompositeDir(compProj, "render");
   const captures: Record<string, CaptureResult> = {};
-  for (const s of scenarios) captures[s.name] = await loadProject(projectDirFor(s));
+  // The video is always the project's own capture.mp4; capture.json's videoPath is not trusted as an ffmpeg input.
+  for (const s of scenarios) captures[s.name] = { ...(await loadProject(projectDirFor(s))), videoPath: join(projectDirFor(s), "capture.mp4") };
   const { patch, events, scenes } = composeEditor(comp, captures, Object.fromEntries(scenarios.map((s) => [s.name, s.edit])));
+  const empty = emptyStreams(scenes);
+  if (empty.length) throw new ToolError("render", "EMPTY_SEGMENT", `no video in: ${empty.join(", ")}`, "after-fix", "lower that stream's startMs (it is past the end of the aligned recording)");
   await mkdir(compProj, { recursive: true });
   const video = join(compProj, "capture.mp4");
   const probe = await buildComposite(scenes, captures, comp.size ?? DEFAULT_SIZE, video);
@@ -329,8 +347,10 @@ async function main(argv: string[]): Promise<unknown> {
           throw new ToolError("validate", "OUTPUT_EXISTS", `${resolve(comp.output.path)} already exists`, "after-fix", "pass --force or change output.path; nothing was launched");
         }
         const compProj = projectDirFor(comp);
+        await assertCompositeDir(compProj, "validate");
         const rerender = `render ${compProj} --composition ${arg} --force`;
-        const { projectDirs, startSkewMs } = await captureAll(scenarios, f, rerender);
+        const { projectDirs, startSkewMs, warnings: skew } = await captureAll(scenarios, f, arg, rerender);
+        warnings.push(...skew);
         let result;
         try {
           result = await renderComposition(compProj, comp, arg, scenarios, f);
