@@ -4,41 +4,41 @@
   "steps": [
     { "action": "mark", "caption": "エージェントはシェルから CLI を呼び、JSON で結果を読む", "waitMs": 3500 },
 
-    { "action": "fill", "target": ".xterm-helper-textarea", "value": "bun src/cli.ts doctor | jq -c '.checks[] | {name, ok}'", "zoom": false,
+    { "action": "fill", "target": "#terminal textarea", "value": "bun src/cli.ts doctor | jq -c '.checks[] | {name, ok}'", "zoom": false,
       "caption": "doctor：必要な道具と OS 権限を確かめる（読み取りのみ）", "waitMs": 700 },
     { "action": "press", "key": "Enter", "waitMs": 6000 },
 
-    { "action": "fill", "target": ".xterm-helper-textarea", "value": "clear; jq -c '.source, .steps[]' scenarios/browser-wikipedia.json", "zoom": false,
+    { "action": "fill", "target": "#terminal textarea", "value": "clear; jq -c '.source, .steps[]' scenarios/browser-wikipedia.json", "zoom": false,
       "caption": "シナリオは JSON。対象はセレクタで指し、字幕を添える", "waitMs": 700 },
     { "action": "press", "key": "Enter", "waitMs": 5500 },
 
-    { "action": "fill", "target": ".xterm-helper-textarea", "value": "clear; bun src/cli.ts check scenarios/browser-wikipedia.json --allow-origin https://en.wikipedia.org | jq -c", "zoom": false,
+    { "action": "fill", "target": "#terminal textarea", "value": "clear; bun src/cli.ts check scenarios/browser-wikipedia.json --allow-origin https://en.wikipedia.org | jq -c", "zoom": false,
       "caption": "check：シナリオを検証するだけで、何も起動しない", "waitMs": 700 },
     { "action": "press", "key": "Enter", "waitMs": 4000 },
 
-    { "action": "fill", "target": ".xterm-helper-textarea", "value": "clear; bun src/cli.ts run scenarios/browser-wikipedia.json --allow-origin https://en.wikipedia.org --force 2>/dev/null | jq '{ok, stage, outputPath, zooms, annotations} | .outputPath |= sub(\".*/out/\"; \"out/\")'", "zoom": false,
+    { "action": "fill", "target": "#terminal textarea", "value": "clear; bun src/cli.ts run scenarios/browser-wikipedia.json --allow-origin https://en.wikipedia.org --force 2>/dev/null | jq '{ok, stage, outputPath, zooms, annotations} | .outputPath |= sub(\".*/out/\"; \"out/\")'", "zoom": false,
       "caption": "run：check → 録画 → 書き出し → inspect を通しで実行する", "waitMs": 700 },
     { "action": "press", "key": "Enter", "waitMs": 24000 },
     { "action": "mark", "caption": "ok:true と出力先、ズーム数、字幕数が JSON で返る", "waitMs": 4500 },
 
-    { "action": "fill", "target": ".xterm-helper-textarea", "value": "clear; bun src/cli.ts run scenarios/desktop-calculator.json --allow-app com.apple.calculator --force 2>/dev/null | jq '{ok, stage, outputPath, zooms, annotations} | .outputPath |= sub(\".*/out/\"; \"out/\")'", "zoom": false,
+    { "action": "fill", "target": "#terminal textarea", "value": "clear; bun src/cli.ts run scenarios/desktop-calculator.json --allow-app com.apple.calculator --force 2>/dev/null | jq '{ok, stage, outputPath, zooms, annotations} | .outputPath |= sub(\".*/out/\"; \"out/\")'", "zoom": false,
       "caption": "desktop：アクセシビリティ API で計算機を操作して録画する", "waitMs": 700 },
     { "action": "press", "key": "Enter", "waitMs": 45000 },
 
-    { "action": "fill", "target": ".xterm-helper-textarea", "value": "clear; bun src/cli.ts run scenarios/file-reedit.json --force 2>/dev/null | jq -c '{ok, outputPath, annotations} | .outputPath |= sub(\".*/out/\"; \"out/\")'", "zoom": false,
+    { "action": "fill", "target": "#terminal textarea", "value": "clear; bun src/cli.ts run scenarios/file-reedit.json --force 2>/dev/null | jq -c '{ok, outputPath, annotations} | .outputPath |= sub(\".*/out/\"; \"out/\")'", "zoom": false,
       "caption": "file ソース：録画済みの動画に、ぼかしや余白を後から足す", "waitMs": 700 },
     { "action": "press", "key": "Enter", "waitMs": 18000 },
 
-    { "action": "open", "url": "http://127.0.0.1:8765/_demo/sheet.html?src=wikipedia-search.project/inspect-sheet.png",
+    { "action": "open", "url": "http://127.0.0.1:7681/demo/sheet.html?src=wikipedia-search.project/inspect-sheet.png",
       "caption": "inspect-sheet：各コマで要素・カーソル・字幕を目で確かめる", "waitMs": 3000 },
     { "action": "wait", "ms": 2500 },
 
-    { "action": "open", "url": "http://127.0.0.1:8765/_demo/media.html?src=wikipedia-search.mp4",
+    { "action": "open", "url": "http://127.0.0.1:7681/demo/media.html?src=wikipedia-search.mp4",
       "caption": "書き出した MP4：ズーム・カーソル・字幕は操作ログから付く", "waitMs": 3000 },
     { "action": "wait", "ms": 3000 },
     { "action": "wait", "ms": 3000 },
 
-    { "action": "open", "url": "http://127.0.0.1:8765/_demo/media.html?src=calculator.gif",
+    { "action": "open", "url": "http://127.0.0.1:7681/demo/media.html?src=calculator.gif",
       "caption": "desktop の録画は GIF でも書き出せる", "waitMs": 3000 },
     { "action": "wait", "ms": 3000 },
     { "action": "wait", "ms": 3000 },

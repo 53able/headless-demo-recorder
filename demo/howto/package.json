@@ -1,0 +1,8 @@
+{
+  "name": "headless-demo-recorder-howto",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@wterm/dom": "0.5.7"
+  }
+}

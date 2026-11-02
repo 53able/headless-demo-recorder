@@ -66,19 +66,22 @@ bun src/cli.ts render out/wikipedia-search.project --edit edit.json --out out/v2
 
 ## 説明動画を作り直す
 
-`demo/howto/` は、このツールの使い方を見せる説明動画（`out/howto.mp4`）を、このツール自身で録画する手順である。ブラウザ上の端末（ttyd）で実際にコマンドを打ち、その画面を browser ソースで録画する。端末内では browser・desktop・file の3種類の `run` を実行する。
+`demo/howto/` は、このツールの使い方を見せる説明動画（`out/howto.mp4`）を、このツール自身で録画する手順である。ブラウザ上の端末で実際にコマンドを打ち、その画面を browser ソースで録画する。端末内では browser・desktop・file の3種類の `run` を実行する。
+
+端末は [wterm](https://github.com/vercel-labs/wterm)（DOM で描画するウェブ端末）と、Bun の PTY（`Bun.spawn` の `terminal`）で動かす。`demo/howto/server.ts` が、端末、結果ページ（`/demo/`）、`out/` の配信を 127.0.0.1:7681 の1つのポートで受け持つ。
 
 ```bash
-brew install ttyd                # 初回のみ
-demo/howto/serve.sh &            # 端末 :7681 と結果ページ :8765 を 127.0.0.1 で起動
-bun src/cli.ts run demo/howto/scenario.json \
-  --allow-origin http://127.0.0.1:7681 --allow-origin http://127.0.0.1:8765 --force
-kill %1                          # serve.sh を止める
+bun install --cwd demo/howto      # 初回のみ（@wterm/dom）
+bun demo/howto/server.ts &        # 127.0.0.1:7681
+bun src/cli.ts run demo/howto/scenario.json --allow-origin http://127.0.0.1:7681 --force
+kill %1
 ```
 
 - 端末内の desktop 録画で計算機が起動するので、desktop 録画の権限が要る（`doctor` で確認する）。
-- 録画される端末は、利用者の設定ではなく `demo/howto/zdotdir/.zshrc` で起動する。プロンプトにユーザー名やホームのパスは出ない。
+- 端末の WebSocket は、`Origin` が `http://127.0.0.1:7681` の接続だけを受け付ける。書き込みできるシェルなので、普段のブラウザで開いている他のページからは操作できないようにしている。
+- 録画される端末は、利用者の設定ではなく `demo/howto/zdotdir/.zshrc` で起動する。プロンプトにユーザー名やホームのパスは出ず、履歴も保存しない。
 - 端末内の各コマンドは stderr を捨て、出力のパスを `out/` からの相対パスに直して表示する。絶対パスにはホームディレクトリが含まれるためである。
+- 標準の Terminal.app を agent-desktop で操作する方法は取らない。`src/appguard.ts` の拒否リストが Terminal.app への入力を拒否するためである。
 
 ## Codex / Claude Code から使う
 

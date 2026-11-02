@@ -12,7 +12,7 @@ const grid = document.querySelector(".grid");
 for (const pos of ["0%", "33.333%", "66.667%", "100%"]) {
   const t = grid.appendChild(document.createElement("div"));
   t.className = "t";
-  t.style.backgroundImage = `url("../${src}")`;
+  t.style.backgroundImage = `url("/out/${encodeURI(src)}")`;
   t.style.backgroundPosition = `${pos} 0`;
 }
 </script>

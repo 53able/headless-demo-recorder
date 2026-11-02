@@ -1,0 +1,17 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "headless-demo-recorder-howto",
+      "dependencies": {
+        "@wterm/dom": "0.5.7",
+      },
+    },
+  },
+  "packages": {
+    "@wterm/core": ["@wterm/core@0.5.7", "", {}, "sha512-Dc12KwlWaCrTLABYNqm2OIxlC8vFsTejcJb8uql9oNucn5hj/YVldNOuBDddtSXJCasLBTPJQxdCnhnGZRYHKg=="],
+
+    "@wterm/dom": ["@wterm/dom@0.5.7", "", { "dependencies": { "@wterm/core": "0.5.7" } }, "sha512-yqnn43PnPdexno0ZHEC94iYIOBhximQBTVDr3qhRuhO3IQ69TjbFHNf7d5+ooRaXcEmPYz38bDNV7OXG+qzV/A=="],
+  }
+}
