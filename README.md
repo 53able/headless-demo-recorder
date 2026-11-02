@@ -41,6 +41,38 @@ OpenScreen の `--auto-zoom` は、実際のマウスクリックを手がかり
   - macOS で PATH に通すときは、シンボリックリンクではなく実体を `exec` するスクリプトを置く（例: `printf '#!/bin/sh\nexec /Applications/Openscreen.app/Contents/MacOS/Openscreen "$@"\n'`）。シンボリックリンク経由だと `help` と `export` は動くが、`record` が `Renderer crashed` で失敗する（実測）。
 - デスクトップ録画には、ターミナルへの画面収録とアクセシビリティの権限付与が必要
 
+## セットアップ（AI に頼む）
+
+Claude Code か Codex に次のプロンプトを貼ると、このマシンのどのプロジェクトからでも使えるように整える。ツールの導入と既存ファイルの上書きの前には確認を求め、OS の権限は変えずに案内だけする。手作業で行う場合の内容は「[別のプロジェクトから使う](#別のプロジェクトから使う)」と同じ。
+
+````text
+headless-demo-recorder を、このマシンのどのプロジェクトからでも Claude Code と Codex で使えるようにセットアップしてください。
+
+## 完了条件
+- 任意のディレクトリで `headless-demo-recorder doctor` が `"ok": true` を返す
+- `headless-demo-recorder schema` が `"ok": true` を返す
+- `~/.claude/skills/headless-demo-recorder` と `~/.codex/skills/headless-demo-recorder` から、リポジトリ内の `skills/headless-demo-recorder/SKILL.md` が読める
+
+## 手順
+1. 前提を調べる（読み取りのみ）: macOS であること、`bun`・`ffmpeg`・`agent-browser`（0.41 以上）・`agent-desktop`（1.0.2 以上）の有無と版、`/Applications/Openscreen.app`（1.13 以上）の有無。足りないものを一覧にする。
+2. リポジトリ: `~/headless-demo-recorder` が無ければ `git clone https://github.com/53able/headless-demo-recorder ~/headless-demo-recorder`。あれば `git -C ~/headless-demo-recorder pull --ff-only`。
+3. PATH 上のユーザー用ディレクトリ（`~/.local/bin` が PATH にあればそこ。無ければ PATH にある書き込み可能なユーザー用ディレクトリ）に、次の2つのシェルスクリプトを置いて実行権限を付ける。パスはすべて展開した絶対パスで書く。
+   - `headless-demo-recorder`: `exec bun <リポジトリの絶対パス>/src/cli.ts "$@"`
+   - `openscreen`: `unset ELECTRON_RUN_AS_NODE` のあと `exec /Applications/Openscreen.app/Contents/MacOS/Openscreen "$@"`。シンボリックリンクにはしない（`record` が失敗する）
+4. `~/.claude/skills/headless-demo-recorder` と `~/.codex/skills/headless-demo-recorder` を、`<リポジトリの絶対パス>/skills/headless-demo-recorder` へのシンボリックリンクにする。
+5. `headless-demo-recorder doctor` と `headless-demo-recorder schema` を実行し、結果を報告する。
+
+## 守ること
+- 足りないツールの導入（brew install、npm i -g、OpenScreen の入手）は、実行するコマンドを一覧にして、私の承認を得てから行う。
+- 置き先にファイルやリンクが既にあるときは、中身を確認して私に聞いてから上書きする。
+- macOS の画面収録・アクセシビリティの権限を変更しない。`doctor` の permission が granted でなければ、どのアプリ（このエージェントを動かしているターミナル）に付与すればよいかを伝えて止める。
+- `sudo` を使わない。`~/.claude/CLAUDE.md`、`~/.codex/AGENTS.md`、シェルの設定ファイル（`.zshrc` など）を編集しない。
+- Codex で実行しているなら、`doctor` はサンドボックス外で実行する許可を最初から求める（中では openscreen がクラッシュする）。
+- 各手順のあとに「✅ <やったこと>」を1行出す。完了条件を満たしたら、または私の判断が要るところで止まる。
+````
+
+セットアップ後は、どのプロジェクトでも「このページのサインアップを15秒のデモ動画にして」のように頼めばスキルが使われる。
+
 ## 使い方
 
 ```bash
@@ -93,6 +125,80 @@ bun src/cli.ts run scenarios/composition-calc-wiki.json --allow-app com.apple.ca
 - エージェントの作業手順とガードレール: `AGENTS.md`
 - 設計の根拠: `docs/tool-design-review.md`
 
+## クックガイド
+
+よくある用途ごとに、AI への頼み方と、AI が書くシナリオの要点を示す。シナリオの形式の全体は `headless-demo-recorder schema`（型定義）と `scenarios/` の例で確かめられる。どのレシピも `check` → `run` → inspect-sheet の目視、の順で進む。
+
+### ウェブページの操作を録る
+> 「https://example.com のサインアップ手順を、入力欄を順に埋める20秒のデモ動画にして」
+
+```json
+{
+  "name": "signup",
+  "source": { "type": "browser", "url": "https://example.com/signup", "viewport": [1280, 800] },
+  "steps": [
+    { "action": "fill", "target": "#email", "value": "demo@example.com", "caption": "メールアドレスだけで始められる" },
+    { "action": "click", "target": "text=続ける", "caption": "確認メールの前に、まず使い心地を見られる" }
+  ],
+  "output": { "path": "out/signup.mp4" }
+}
+```
+- 対象は CSS・id・テキストのセレクタで指す（`@e3` のような下見の参照は使えない）。字幕には「何をしたか」より「なぜそうするか」を書く。
+- `run demo/signup.json --allow-origin https://example.com` で、通信先をそのホストに限れる。
+
+### macOS アプリの操作を録る
+> 「計算機で 7+8 を計算する様子を GIF にして」
+
+```json
+{
+  "name": "calculator",
+  "source": { "type": "desktop", "app": "Calculator", "launch": true },
+  "steps": [
+    { "action": "click", "target": { "role": "button", "name": "7", "exact": true }, "caption": "7" },
+    { "action": "click", "target": { "role": "button", "name": "加算", "exact": true }, "caption": "+" }
+  ],
+  "output": { "path": "out/calculator.gif", "gifFps": 20, "gifSize": "medium" }
+}
+```
+- 対象はアクセシビリティの `role` と `name`（表示言語の名前。日本語環境なら「加算」）で指す。`--allow-app com.apple.calculator` で入力先をそのアプリに限れる。
+- 実際のウィンドウを録るので、通知も映り込む。録画前にアプリを初期状態に戻しておく。
+
+### 録画済みの動画に字幕とズームを付ける
+> 「この QuickTime の録画 `rec.mov` に、操作の説明字幕とクリック位置へのズームを付けて」
+
+```json
+{ "name": "rec", "source": { "type": "file", "path": "rec.mov", "events": "rec.events.json" }, "output": { "path": "out/rec.mp4" } }
+```
+```json
+[
+  { "tMs": 1200, "kind": "click", "point": { "cx": 0.42, "cy": 0.18 }, "caption": "設定を開く" },
+  { "tMs": 4800, "kind": "click", "point": { "cx": 0.70, "cy": 0.55 }, "caption": "通知をオフにする" }
+]
+```
+- 操作ログの座標は動画フレームに対する 0〜1 の比率（ピクセル値ではない）。ブラウザもアプリも起動しない。
+
+### パスワードや個人情報をぼかす
+> 「ログインのデモで、パスワード欄と右上のアカウント名をぼかして」
+
+- 入力欄はステップに `"redact": true` を付ける。その時刻から最後までぼかしが掛かる。
+- 決まった場所は `edit.redact` に `{ "rect": { "x": 0.75, "y": 0, "w": 0.25, "h": 0.06 }, "startMs": 0, "endMs": 8000 }` のように書く。
+- 書き出したら inspect-sheet で、ぼかしが欄を覆っているかを必ず目で確かめる。
+
+### 待ち時間を早送りする
+> 「読み込み待ちが長いので、操作のない時間は早送りして」
+
+- `edit` に `"idleSpeedupMs": 1500, "idleSpeed": 4` を書くと、1.5秒を超えて操作のない区間が4倍速になる。
+
+### 2つの操作を同時に録って1本にする
+> 「管理画面と利用者画面を左右に並べて、同じ時間に映る動画にして」
+
+- 既存のシナリオを2本参照する構成ファイル（composition）を書く。詳しくは「[複数の録画を同時に行い、1本に結合する](#複数の録画を同時に行い1本に結合するcomposition)」。シナリオ間の操作の待ち合わせ（A が送ったら B が受け取る）はできず、開始時刻だけが揃う。
+
+### 録り直さずに直す
+> 「2つ目の字幕を変えて、ズームを弱くして」
+
+- 字幕・時刻・座標は `out/<name>.project/events.json`、ズームや見た目はシナリオの `edit` を直し、`render out/<name>.project --scenario <file> --force` を実行する。アプリやページは再度操作されない。
+
 ## 説明動画を作り直す
 
 `demo/howto/` は、このツールの使い方を見せる説明動画（`out/howto.mp4`）を、このツール自身で録画する手順である。ブラウザ上の端末で実際にコマンドを打ち、その画面を browser ソースで録画する。端末内では browser・desktop・file の3種類の `run` を実行する。
@@ -130,9 +236,11 @@ kill %1
    headless-demo-recorder doctor
    ```
    `bun link` も使えるが、登録先の `~/.bun/bin` が PATH に無いと呼べない。
-2. エージェントに手順を渡す。`AGENTS.md` はこのリポジトリを開いたときにしか読まれないので、全文をグローバルな指示に貼らず、参照先だけを置く。
-   - Claude Code: ユーザー単位のスキル（`~/.claude/skills/<name>/SKILL.md`）から、このリポジトリの `AGENTS.md` を読むよう指示する。
-   - Codex: `~/.codex/AGENTS.md` に、デモ動画の依頼ではこのリポジトリの `AGENTS.md` を読むよう数行書く。
+2. エージェントに手順を渡す。`AGENTS.md` はこのリポジトリを開いたときにしか読まれないので、リポジトリ内のスキル（`skills/headless-demo-recorder/SKILL.md`）をユーザー単位のスキルとして読ませる。スキルは `schema` が返す `AGENTS.md` を読むよう指示している。
+   ```bash
+   ln -s <このリポジトリ>/skills/headless-demo-recorder ~/.claude/skills/headless-demo-recorder
+   ln -s <このリポジトリ>/skills/headless-demo-recorder ~/.codex/skills/headless-demo-recorder
+   ```
 3. 使う側のプロジェクトでは、シナリオ内のパスがカレントディレクトリからの相対になる。出力先（例: `out/`）を `.gitignore` に入れる。入力の形式はエージェントが `headless-demo-recorder schema` で確かめる。
 
 ### 任意指定の防御
