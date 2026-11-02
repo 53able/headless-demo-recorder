@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { compileEditor, type ZoomRegion } from "./compile.ts";
-import { alignLeadMs, composeEditor, compositeArgs, emptyStreams, fitRect, planScenes, resolveZoomConflicts, type AlignedCapture } from "./compose.ts";
+import { alignLeadMs, alignWarning, composeEditor, compositeArgs, emptyStreams, fitRect, planScenes, resolveZoomConflicts, type AlignedCapture } from "./compose.ts";
 import type { ActionEvent, Composition } from "./types.ts";
 
 const click = (tMs: number, cx: number, cy: number, extra: Partial<ActionEvent> = {}): ActionEvent => ({
@@ -26,6 +26,12 @@ test("alignLeadMs measures each start against the latest; missing t0 or a differ
   expect(alignLeadMs({ a: cap(10, 10, 1000, []), b: cap(10, 10, 1000, []) })).toEqual({ a: 0, b: 0 });
   // Re-captured ten minutes later on its own: aligning by wall clock would empty the other segment.
   expect(alignLeadMs({ a: cap(10, 10, 1000, [], 1000, "r1"), b: cap(10, 10, 1000, [], 601000, "r2") })).toEqual({ a: 0, b: 0 });
+  // Same session group name reused a day later: not one run either.
+  expect(alignLeadMs({ a: cap(10, 10, 1000, [], 1000, "session-group:g"), b: cap(10, 10, 1000, [], 1000 + 86_400_000, "session-group:g") })).toEqual({ a: 0, b: 0 });
+  expect(alignLeadMs({ a: cap(10, 10, 1000, [], 1000, "session-group:g"), b: cap(10, 10, 1000, [], 31_000, "session-group:g") })).toEqual({ a: 30_000, b: 0 });
+  // ...and the caller is told why the streams were not aligned.
+  expect(alignWarning({ a: cap(10, 10, 1000, [], 1000, "session-group:g"), b: cap(10, 10, 1000, [], 1000 + 86_400_000, "session-group:g") })).toContain("not time-aligned");
+  expect(alignWarning({ a: cap(10, 10, 1000, [], 1000, "session-group:g"), b: cap(10, 10, 1000, [], 31_000, "session-group:g") })).toBeUndefined();
 });
 
 test("segment-local time subtracts start and lead", () => {

@@ -1,0 +1,10 @@
+{
+  "name": "session-wikipedia",
+  "source": { "type": "browser", "url": "https://en.wikipedia.org/wiki/Main_Page", "viewport": [1280, 800] },
+  "edit": {
+    "zoom": { "depth": 3, "leadMs": 500, "holdMs": 1800 },
+    "idleSpeedupMs": 1500,
+    "idleSpeed": 4
+  },
+  "output": { "path": "out/session-wikipedia.mp4", "quality": "good" }
+}

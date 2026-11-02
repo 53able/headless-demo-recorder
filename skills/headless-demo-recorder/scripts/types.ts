@@ -54,8 +54,9 @@ export type FileSource = {
 };
 export type Source = BrowserSource | DesktopSource | FileSource;
 
-/** Browser targets use agent-browser selectors (`@e3`, `text=..`, css). Desktop
- * targets use an agent-desktop `find` query. */
+/** Browser targets use agent-browser selectors (`text=..`, css; `@eN` only inside a `session`,
+ * where the ref comes from `session observe`). Desktop targets use an agent-desktop `find`
+ * query, or inside a `session` a qualified ref string (`@<snapshot_id>:eN`) from `session observe`. */
 export type DesktopTarget = { role?: string; name?: string; text?: string; exact?: boolean };
 export type Target = string | DesktopTarget;
 
@@ -67,7 +68,11 @@ export type Step = StepAck & (
   | { action: "click"; target: Target; caption?: string; zoom?: boolean; redact?: boolean; waitMs?: number }
   | { action: "fill"; target: Target; value: string; caption?: string; zoom?: boolean; redact?: boolean; waitMs?: number }
   | { action: "press"; key: string; caption?: string; waitMs?: number }
-  | { action: "scroll"; direction?: "up" | "down"; px?: number; caption?: string; waitMs?: number }
+  /** Browser: scrolls the page by px (no target). Desktop: scrolls the target element by
+   * max(1, round(px / 100)) scroll units (px defaults to 300). */
+  | { action: "scroll"; target?: Target; direction?: "up" | "down" | "left" | "right"; px?: number; caption?: string; waitMs?: number }
+  /** Pick an option in a dropdown / list (browser: by value or visible label). */
+  | { action: "select"; target: Target; value: string; caption?: string; zoom?: boolean; redact?: boolean; waitMs?: number }
   | { action: "open"; url: string; caption?: string; waitMs?: number }
   | { action: "wait"; ms: number; caption?: string }
   | { action: "mark"; caption: string; waitMs?: number }

@@ -1,11 +1,8 @@
 {
   "name": "headless-demo-recorder",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "bin": {
-    "headless-demo-recorder": "src/cli.ts"
-  },
   "scripts": {
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test"

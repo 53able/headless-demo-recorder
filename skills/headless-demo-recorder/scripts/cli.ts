@@ -2,18 +2,20 @@
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { captureBrowser } from "./capture/browser.ts";
-import { captureDesktop } from "./capture/desktop.ts";
+import { captureBrowser, startBrowser } from "./capture/browser.ts";
+import { captureDesktop, startDesktop } from "./capture/desktop.ts";
+import { actLogged, type Driver } from "./capture/driver.ts";
 import { captureFile } from "./capture/file.ts";
 import { compileEditor } from "./compile.ts";
-import { buildComposite, composeEditor, DEFAULT_SIZE, emptyStreams } from "./compose.ts";
+import { alignWarning, buildComposite, composeEditor, DEFAULT_SIZE, emptyStreams } from "./compose.ts";
 import { doctor } from "./doctor.ts";
 import { ToolError, asToolError } from "./errors.ts";
 import { barrier, exists, log, requestAbort } from "./exec.ts";
 import { inspect } from "./inspect.ts";
 import { render } from "./render.ts";
 import type { CaptureResult, Composition, EditPlan, Output, Scenario } from "./types.ts";
-import { type Issue, isComposition, normalizeOrigin, validateComposition, validateEvents, validateScenario } from "./validate.ts";
+import { launchServer, liveSession, logPath, readState, request, serve, type SessionConfig } from "./session.ts";
+import { type Issue, isComposition, normalizeOrigin, validateComposition, validateEvents, validateScenario, validateStep } from "./validate.ts";
 
 const USAGE = `headless capture → edit → export
 
@@ -28,10 +30,22 @@ const USAGE = `headless capture → edit → export
   plan    <project-dir> [--edit edit.json]
                                   R0  print the editor regions that render would write
   run     <scenario.json>         check → capture → render → inspect
+  session start   <scenario.json> [--group g] [--idle-timeout s]
+                                  R2  start recording and keep it open (browser/desktop); the
+                                      scenario's steps, if any, run first
+  session observe <project-dir> [--screenshot]
+                                  R0* accessibility snapshot (refs usable in act) [+ PNG] of the live UI
+  session act     <project-dir> '<step json>'
+                                  R2  one step, checked like a scenario step; refs from observe are valid
+  session status  <project-dir>   R0  recording / stopped / failed, elapsed ms, logged events
+  session stop    <project-dir>   R1  stop recording and save the project (then render / inspect)
+                                  Sessions started with the same --group are time-aligned when a
+                                  composition joins them, so several agents can each drive one.
   (check/run take a composition.json too: its scenarios are recorded in parallel and joined;
    render/plan <composition-project> [--composition c.json] re-join and re-export without recording)
 
-Flags: --force (overwrite an existing capture/output), --keep-work (keep raw capture files)
+Flags: --force (overwrite an existing capture/output), --keep-work (keep raw capture files),
+       --screenshot (session observe: also save a PNG)
 Guards (check/capture/run):
   --allow-origin <origin>   repeatable; every URL must match scheme+host+port; the browser is
                             limited to these hosts (agent-browser --allowed-domains)
@@ -42,16 +56,17 @@ stdout: exactly one JSON object. ok:false carries stage, code, retry (safe | aft
 stderr: progress logs.`;
 
 type Flags = {
-  force: boolean; keepWork: boolean; allowOrigins: string[]; allowApps: string[];
+  force: boolean; keepWork: boolean; screenshot: boolean; allowOrigins: string[]; allowApps: string[];
   opts: Record<string, string>; pos: string[];
 };
 
 function parseArgs(argv: string[]): Flags {
-  const f: Flags = { force: false, keepWork: false, allowOrigins: [], allowApps: [], opts: {}, pos: [] };
+  const f: Flags = { force: false, keepWork: false, screenshot: false, allowOrigins: [], allowApps: [], opts: {}, pos: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--force") f.force = true;
     else if (a === "--keep-work") f.keepWork = true;
+    else if (a === "--screenshot") f.screenshot = true;
     else if (a.startsWith("--")) {
       const v = argv[++i];
       if (v === undefined) throw new ToolError("validate", "BAD_ARGS", `${a} needs a value`, "after-fix", USAGE);
@@ -172,6 +187,7 @@ async function doCapture(scenario: Scenario, f: Flags, extra: { sessionName?: st
   if ((await projectKind(projDir)) === "composite") {
     throw new ToolError("capture", "PROJECT_COLLISION", `${projDir} is a composition's project`, "after-fix", "change this scenario's output.path; nothing was launched");
   }
+  await assertNoLiveSession(projDir);
   if ((await exists(join(projDir, "capture.json"))) && !f.force) {
     throw new ToolError("capture", "CAPTURE_EXISTS", `${projDir} already has a capture`, "after-fix", `re-edit it with: render ${projDir} --scenario <file> (or pass --force to record again)`);
   }
@@ -190,13 +206,118 @@ async function doCapture(scenario: Scenario, f: Flags, extra: { sessionName?: st
     // Keep raw files: a failed step may still have produced a usable recording.
     throw asToolError(e, "capture", { workDir: work });
   }
+  return { projDir, capture: await saveCapture(projDir, capture, extra.runId, f.keepWork) };
+}
+
+/** Move the recording into `<projDir>/capture.mp4` and write capture.json + events.json. */
+async function saveCapture(projDir: string, captured: CaptureResult, runId: string | undefined, keepWork: boolean): Promise<CaptureResult> {
   const video = join(projDir, "capture.mp4");
-  await rename(capture.videoPath, video);
-  capture = { ...capture, videoPath: video, ...(extra.runId ? { runId: extra.runId } : {}) };
+  await rename(captured.videoPath, video);
+  const capture = { ...captured, videoPath: video, ...(runId ? { runId } : {}) };
   await writeFile(join(projDir, "capture.json"), JSON.stringify(capture, null, 2));
   await writeFile(join(projDir, "events.json"), JSON.stringify(capture.events, null, 2));
-  if (!f.keepWork) await rm(work, { recursive: true, force: true });
-  return { projDir, capture };
+  if (!keepWork) await rm(join(projDir, "work"), { recursive: true, force: true });
+  return capture;
+}
+
+async function assertNoLiveSession(projDir: string) {
+  if (await liveSession(projDir)) {
+    throw new ToolError("capture", "SESSION_ACTIVE", `${projDir} is being recorded by a session`, "after-fix", `stop it first: session stop ${projDir}`);
+  }
+}
+
+const CLI_PATH = fileURLToPath(import.meta.url);
+const sessionRunId = (group: string | undefined) => (group ? `session-group:${group}` : undefined);
+
+/** `session <sub> ...`. Each sub-command is one short-lived client call; the recorder lives in the server process. */
+async function sessionCommand(f: Flags): Promise<unknown> {
+  const [sub, target, stepJson] = f.pos;
+  if (!target) return undefined;
+  if (sub === "start") {
+    const { scenario, warnings } = await loadScenario(target, f);
+    if (scenario.source.type === "file") throw new ToolError("validate", "BAD_ARGS", "a session records a browser or desktop source; a file source has nothing to drive", "after-fix", "use run for file sources");
+    const projDir = projectDirFor(scenario);
+    if ((await projectKind(projDir)) === "composite") throw new ToolError("validate", "PROJECT_COLLISION", `${projDir} is a composition's project`, "after-fix", "change this scenario's output.path; nothing was launched");
+    await assertNoLiveSession(projDir);
+    if ((await exists(join(projDir, "capture.json"))) && !f.force) {
+      throw new ToolError("validate", "CAPTURE_EXISTS", `${projDir} already has a capture`, "after-fix", `re-edit it with: render ${projDir} --scenario ${target} (or pass --force to record again)`);
+    }
+    const idle = Number(f.opts["idle-timeout"] ?? 600);
+    if (!Number.isFinite(idle) || idle < 10) throw new ToolError("validate", "BAD_ARGS", "--idle-timeout must be a number of seconds >= 10", "after-fix", USAGE);
+    if (f.opts.group !== undefined && !/^[\w.-]+$/.test(f.opts.group)) throw new ToolError("validate", "BAD_ARGS", "--group must be [A-Za-z0-9_.-]+", "after-fix", USAGE);
+    const config: SessionConfig = {
+      scenarioPath: resolve(target), scenario, cwd: process.cwd(),
+      allowOrigins: f.allowOrigins, allowApps: f.allowApps, sessionName: f.opts["session-name"],
+      group: f.opts.group, keepWork: f.keepWork, idleTimeoutMs: idle * 1000,
+    };
+    const state = await launchServer(projDir, config, CLI_PATH);
+    if (state.status === "failed") return state.error;
+    return {
+      ok: true, stage: "session", status: "recording", projectDir: projDir, warnings,
+      ...(config.group ? { group: config.group } : {}),
+      next: [`session observe ${projDir}`, `session act ${projDir} '<step json>'`, `session stop ${projDir}`],
+    };
+  }
+  const projDir = resolve(target);
+  switch (sub) {
+    case "observe": return request(projDir, { op: "observe", screenshot: f.screenshot }, 120_000);
+    case "act": {
+      if (!stepJson) throw new ToolError("validate", "BAD_ARGS", "session act needs a step as JSON, e.g. '{\"action\":\"click\",\"target\":\"@e3\"}'", "after-fix", USAGE);
+      let step: unknown;
+      try {
+        step = JSON.parse(stepJson);
+      } catch (e) {
+        throw new ToolError("validate", "BAD_JSON", `the step is not JSON: ${(e as Error).message}`, "after-fix", "nothing was executed; the recording continues");
+      }
+      // A step can take ~4 min at worst (three 60s tool calls + a 60s waitMs); wait past that.
+      return request(projDir, { op: "act", step }, 400_000);
+    }
+    case "stop": return request(projDir, { op: "stop" }, 600_000);
+    case "status": {
+      const s = await readState(projDir);
+      if (!s) throw new ToolError("validate", "NO_SESSION", `${projDir} has no session`, "after-fix", "start one with: session start <scenario.json>");
+      const live = await liveSession(projDir);
+      if (live?.status === "recording") return request(projDir, { op: "status" }, 30_000);
+      return { ok: s.status !== "failed", stage: "session", status: live ? s.status : s.status === "stopped" || s.status === "failed" ? s.status : `${s.status} (server not running)`,
+        ...(s.reason ? { reason: s.reason } : {}), ...(s.error ? { error: s.error } : {}), log: logPath(projDir) };
+    }
+  }
+  return undefined;
+}
+
+/** The detached server behind `session start`. */
+function serveSession(projDir: string) {
+  const start = async (c: SessionConfig): Promise<Driver> => {
+    const work = join(projDir, "work");
+    await rm(work, { recursive: true, force: true });
+    await mkdir(work, { recursive: true });
+    const src = c.scenario.source;
+    const d = src.type === "browser"
+      ? await startBrowser(src, work, { allowOrigins: c.allowOrigins, sessionName: c.sessionName ?? `headless-demo-recorder-session-${c.scenario.name}-${process.pid}` })
+      : src.type === "desktop"
+        ? await startDesktop(src, work, { allowApps: c.allowApps })
+        : (() => { throw new Error("a session needs a browser or desktop source"); })();
+    try {
+      const steps = c.scenario.steps ?? [];
+      for (const [i, step] of steps.entries()) await actLogged(d, step, `start step ${i + 1}/${steps.length}`);
+    } catch (e) {
+      await d.close();
+      throw e;
+    }
+    return d;
+  };
+  return serve(projDir, {
+    start,
+    validate: (step, c) => validateStep(step, c.scenario.source, { allowOrigins: c.allowOrigins.length ? c.allowOrigins : undefined, liveRefs: true }, c.scenario.allowDestructive === true)
+      .filter((i) => i.level === "error").map((i) => `${i.path}: ${i.message}`),
+    save: async (captured, c) => {
+      const capture = await saveCapture(projDir, captured, sessionRunId(c.group), c.keepWork);
+      return {
+        ok: true, stage: "capture", projectDir: projDir, events: capture.events.length, durationMs: capture.durationMs,
+        next: [`render ${projDir} --scenario ${c.scenarioPath}`, ...(c.group ? [`render <composition-project> --composition <c.json>  (joins sessions of group ${c.group}, time-aligned)`] : [])],
+      };
+    },
+  });
 }
 
 async function loadProject(projDir: string): Promise<CaptureResult> {
@@ -287,7 +408,9 @@ async function renderComposition(compProj: string, comp: Composition, compPath: 
   await writeFile(join(compProj, "capture.json"), JSON.stringify(capture, null, 2));
   // Derived each render; edit the referenced projects' events.json instead.
   await writeFile(join(compProj, "events.json"), JSON.stringify(events, null, 2));
-  return render(compProj, comp.name, capture, { ...comp.edit } as EditPlan, comp.output, { force: f.force, patch });
+  const result = await render(compProj, comp.name, capture, { ...comp.edit } as EditPlan, comp.output, { force: f.force, patch });
+  const skew = alignWarning(captures);
+  return { ...result, warnings: skew ? [skew] : [] };
 }
 
 /** `--composition`, else the source recorded in `<projDir>/composition.json`; undefined for a single-scenario project. */
@@ -309,18 +432,28 @@ async function main(argv: string[]): Promise<unknown> {
   const f = parseArgs(rest);
   const arg = f.pos[0];
   switch (cmd) {
+    case "session": {
+      const out = await sessionCommand(f);
+      if (out !== undefined) return out;
+      break;
+    }
+    case "__session-serve": {
+      if (!arg) break;
+      return serveSession(resolve(arg));
+    }
     case "doctor": {
       const checks = await doctor();
       return { ok: checks.every((c) => c.ok), checks };
     }
     case "schema": {
       // The types are the schema: print them as they are, so the answer never drifts from the code.
+      // root = the skill directory (<skill>/scripts/cli.ts → <skill>). Paths are the real ones, not the symlink's.
       const root = dirname(dirname(fileURLToPath(import.meta.url)));
-      const examples = (await readdir(join(root, "scenarios"))).filter((n) => n.endsWith(".json")).map((n) => join(root, "scenarios", n));
+      const examples = (await readdir(join(root, "assets"))).filter((n) => n.endsWith(".json")).map((n) => join(root, "assets", n));
       return {
-        ok: true, guide: join(root, "AGENTS.md"), examples,
-        note: "Scenario = one recording; Composition = 1-2 scenarios recorded together and joined; ActionEvent[] = an events.json. Paths inside a scenario resolve against the current directory. Value limits (0..1 fractions, max 2 scenarios, ...) are enforced by `check`.",
-        types: await readFile(join(root, "src", "types.ts"), "utf8"),
+        ok: true, guide: join(root, "SKILL.md"), examples,
+        note: "Scenario = one recording; Composition = 1-2 scenarios recorded together and joined; ActionEvent[] = an events.json. Paths inside a scenario resolve against the current directory. The examples are templates written for the repository root as cwd; copy and adapt them rather than running them in place. Value limits (0..1 fractions, max 2 scenarios, ...) are enforced by `check`.",
+        types: await readFile(join(root, "scripts", "types.ts"), "utf8"),
       };
     }
     case "check": {
@@ -391,7 +524,7 @@ async function main(argv: string[]): Promise<unknown> {
         }
         const evidence = await inspect(compProj, result.outputPath);
         return {
-          ok: true, stage: "done", ...result, projectDir: compProj, warnings, inspectSheet: evidence.sheet, projectDirs, startSkewMs,
+          ok: true, stage: "done", ...result, projectDir: compProj, warnings: [...warnings, ...result.warnings], inspectSheet: evidence.sheet, projectDirs, startSkewMs,
           next: [`view ${evidence.sheet} and confirm each tile shows the acted element`, `${rerender}  (after editing a referenced events.json or the composition)`],
         };
       }
@@ -426,7 +559,8 @@ if (argv.length === 0 || argv[0] === "help" || argv[0] === "--help") {
 // On SIGINT/SIGTERM, abort in-flight work so capture `finally` blocks run (recorder stop,
 // agent-browser record stop/close), then exit 130/143 with a JSON error.
 let interrupted: { signal: NodeJS.Signals; code: number } | undefined;
-for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
+// The session server handles its own signals: it stops and saves the recording.
+for (const [signal, code] of argv[0] === "__session-serve" ? [] : [["SIGINT", 130], ["SIGTERM", 143]] as const) {
   process.on(signal, () => {
     if (interrupted) process.exit(interrupted.code); // second signal: give up on cleanup
     interrupted = { signal, code };
