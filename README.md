@@ -36,7 +36,7 @@ OpenScreen の `--auto-zoom` は、実際のマウスクリックを手がかり
 
 - macOS
 - bun、ffmpeg
-- `agent-browser`（0.32）、`agent-desktop`（1.0.2）
+- `agent-browser`（0.41）、`agent-desktop`（1.0.2）
 - OpenScreen 1.13 以上（`openscreen` CLI に PATH が通っていること）
 - デスクトップ録画には、ターミナルへの画面収録とアクセシビリティの権限付与が必要
 
