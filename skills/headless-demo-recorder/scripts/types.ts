@@ -7,11 +7,13 @@ export type NRect = { x: number; y: number; w: number; h: number };
 /** One thing the agent did while recording, mapped onto the video timeline. */
 export type ActionEvent = {
   tMs: number;
-  kind: "click" | "type" | "press" | "scroll" | "navigate" | "wait" | "mark";
+  kind: "click" | "type" | "hover" | "drag" | "press" | "scroll" | "navigate" | "wait" | "mark";
   label?: string;
   caption?: string;
   rect?: NRect;
   point?: NPoint;
+  /** drag only: where the pointer is released. */
+  to?: NPoint;
   zoom?: boolean;
   redact?: boolean;
 };
@@ -45,6 +47,9 @@ export type DesktopSource = {
   window?: string;
   launch?: boolean;
   systemAudio?: boolean;
+  /** Allow hover/drag, which agent-desktop can only deliver with the real pointer (`--headed`):
+   * the user's mouse is taken over during those steps. Confirm with the user first. */
+  physicalInput?: boolean;
 };
 export type FileSource = {
   type: "file";
@@ -67,6 +72,10 @@ export type StepAck = { allowDestructive?: boolean };
 export type Step = StepAck & (
   | { action: "click"; target: Target; caption?: string; zoom?: boolean; redact?: boolean; waitMs?: number }
   | { action: "fill"; target: Target; value: string; caption?: string; zoom?: boolean; redact?: boolean; waitMs?: number }
+  /** Move the pointer onto the target without clicking (menus, tooltips). Desktop needs source.physicalInput. */
+  | { action: "hover"; target: Target; caption?: string; zoom?: boolean; waitMs?: number }
+  /** Press on target, move to `to`, release. Desktop needs source.physicalInput. */
+  | { action: "drag"; target: Target; to: Target; caption?: string; zoom?: boolean; waitMs?: number }
   | { action: "press"; key: string; caption?: string; waitMs?: number }
   /** Browser: scrolls the page by px (no target). Desktop: scrolls the target element by
    * max(1, round(px / 100)) scroll units (px defaults to 300). */

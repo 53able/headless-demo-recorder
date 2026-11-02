@@ -42,9 +42,10 @@ export async function startBrowser(src: BrowserSource, workDir: string, opts: Br
   let wallMs = 0;
   const now = () => Date.now() - t0;
 
-  const boxOf = async (sel: string): Promise<NRect | undefined> => {
+  /** `scroll: false` keeps the page where it is (a drag's drop target, after the source was scrolled to). */
+  const boxOf = async (sel: string, scroll = true): Promise<NRect | undefined> => {
     try {
-      await ab("scrollintoview", sel);
+      if (scroll) await ab("scrollintoview", sel);
       const b = await abJson<Box>("get", "box", sel);
       const r = { x: b.x / vw, y: b.y / vh, w: b.width / vw, h: b.height / vh };
       // Element still outside the viewport: no usable focus point.
@@ -118,6 +119,26 @@ export async function startBrowser(src: BrowserSource, workDir: string, opts: Br
           else await ab("select", step.target, step.value);
           break;
         }
+        case "hover": {
+          if (typeof step.target !== "string") throw new Error("browser targets must be selector strings");
+          const rect = await boxOf(step.target);
+          events.push({ tMs: now(), kind: "hover", label: step.target, caption, rect, point: rect && centerOf(rect), zoom: step.zoom });
+          await ab("hover", step.target);
+          break;
+        }
+        case "drag": {
+          if (typeof step.target !== "string" || typeof step.to !== "string") throw new Error("browser targets must be selector strings");
+          const rect = await boxOf(step.target);
+          const to = await boxOf(step.to, false);
+          events.push({
+            tMs: now(), kind: "drag", label: `${step.target} -> ${step.to}`, caption, rect,
+            point: rect && centerOf(rect), to: to && centerOf(to), zoom: step.zoom,
+          });
+          // ponytail: agent-browser drops at once, so the page jumps while the synthetic cursor glides for
+          // DRAG_MS; drive `mouse move/down/up` in steps if the item must follow the cursor on screen.
+          await ab("drag", step.target, step.to);
+          break;
+        }
         case "press":
           events.push({ tMs: now(), kind: "press", label: step.key, caption });
           await ab("press", step.key);
@@ -139,7 +160,7 @@ export async function startBrowser(src: BrowserSource, workDir: string, opts: Br
           events.push({ tMs: now(), kind: "mark", caption });
           break;
       }
-      if (step.action === "click" || step.action === "select" || step.action === "press") await stayOnRecordedTab();
+      if (step.action === "click" || step.action === "select" || step.action === "press" || step.action === "drag") await stayOnRecordedTab();
     } catch (e) {
       events.length = before; // the action did not happen as logged
       throw e;

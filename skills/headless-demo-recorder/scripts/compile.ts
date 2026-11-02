@@ -29,6 +29,11 @@ export function centerOf(r: NRect): NPoint | undefined {
   return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
 }
 const dist = (a: NPoint, b: NPoint) => Math.hypot(a.cx - b.cx, a.cy - b.cy);
+const mid = (a: NPoint, b: NPoint): NPoint => ({ cx: (a.cx + b.cx) / 2, cy: (a.cy + b.cy) / 2 });
+
+/** How long a drag holds the button while moving (desktop passes it to agent-desktop; the cursor draws it). */
+export const DRAG_MS = 800;
+const ZOOM_KINDS: ActionEvent["kind"][] = ["click", "type", "hover", "drag"];
 
 /** Events from files or the `plan` command may be unsorted or run past the video end. */
 export const normalizeEvents = (events: ActionEvent[], durationMs: number): ActionEvent[] =>
@@ -41,11 +46,12 @@ export function compileZooms(events: ActionEvent[], durationMs: number, plan: Ed
   const lead = plan.leadMs ?? 500;
   const hold = plan.holdMs ?? 1800;
   const mergeDistance = plan.mergeDistance ?? 0.25;
-  const targets = normalizeEvents(events, durationMs).filter((e) => e.point && e.zoom !== false && (e.kind === "click" || e.kind === "type"));
+  const targets = normalizeEvents(events, durationMs).filter((e) => e.point && e.zoom !== false && ZOOM_KINDS.includes(e.kind));
 
   const out: ZoomRegion[] = [];
   for (const e of targets) {
-    const p = e.point!;
+    // A drag is framed between where it starts and where it drops.
+    const p = e.to ? mid(e.point!, e.to) : e.point!;
     const start = clamp(e.tMs - lead, 0, durationMs);
     const end = clamp(e.tMs + hold, 0, durationMs);
     const prev = out.at(-1);
@@ -146,7 +152,7 @@ export function synthesizeCursor(events: ActionEvent[], durationMs: number, opts
   const hz = opts.hz ?? 60;
   const travel = opts.travelMs ?? 650;
   const step = 1000 / hz;
-  const targets = normalizeEvents(events, durationMs).filter((e) => e.point).map((e) => ({ t: e.tMs, p: e.point!, click: e.kind === "click" || e.kind === "type" }));
+  const targets = normalizeEvents(events, durationMs).filter((e) => e.point).map((e) => ({ t: e.tMs, p: e.point!, click: e.kind === "click" || e.kind === "type", to: e.kind === "drag" ? e.to : undefined }));
   const samples: CursorSample[] = [];
   if (targets.length === 0) return { version: 2, provider: "native", samples, assets: [] };
 
@@ -162,7 +168,19 @@ export function synthesizeCursor(events: ActionEvent[], durationMs: number, opts
       samples.push({ timeMs: Math.round(t), cx: from.cx + (tg.p.cx - from.cx) * k, cy: from.cy + (tg.p.cy - from.cy) * k, visible: true, interactionType: "move" });
     }
     pos = tg.p;
-    if (tg.click) {
+    if (tg.to) {
+      // Press, glide to the drop point with the button held, release.
+      const at = Math.max(tg.t, samples.at(-1)?.timeMs ?? 0);
+      samples.push({ timeMs: Math.round(at), ...pos, visible: true, interactionType: "click" });
+      const from = pos;
+      for (t = at + step; t < at + DRAG_MS; t += step) {
+        const k = ease((t - at) / DRAG_MS);
+        samples.push({ timeMs: Math.round(t), cx: from.cx + (tg.to.cx - from.cx) * k, cy: from.cy + (tg.to.cy - from.cy) * k, visible: true, interactionType: "move" });
+      }
+      pos = tg.to;
+      samples.push({ timeMs: Math.round(at + DRAG_MS), ...pos, visible: true, interactionType: "mouseup" });
+      t = at + DRAG_MS + step;
+    } else if (tg.click) {
       // Back-to-back clicks: never emit a sample earlier than the previous one.
       const at = Math.max(tg.t, samples.at(-1)?.timeMs ?? 0);
       samples.push({ timeMs: Math.round(at), ...pos, visible: true, interactionType: "click" });

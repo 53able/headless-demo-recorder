@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { centerOf, compileAnnotations, compileIdleSpeedups, compileZooms, synthesizeCursor } from "./compile.ts";
+import { centerOf, compileAnnotations, DRAG_MS, compileIdleSpeedups, compileZooms, synthesizeCursor } from "./compile.ts";
 import { validateEvents } from "./validate.ts";
 import type { ActionEvent } from "./types.ts";
 
@@ -50,6 +50,24 @@ test("synthetic cursor reaches each target and clicks on time", () => {
   const times = c.samples.map((s) => s.timeMs);
   expect([...times].sort((a, b) => a - b)).toEqual(times);
   expect(times.at(-1)!).toBeGreaterThanOrEqual(3980);
+});
+
+test("a drag presses at its start, holds while moving and releases on the drop point; a hover only moves", () => {
+  const drag: ActionEvent = { tMs: 1000, kind: "drag", point: { cx: 0.2, cy: 0.5 }, to: { cx: 0.8, cy: 0.5 } };
+  const hover: ActionEvent = { tMs: 3000, kind: "hover", point: { cx: 0.5, cy: 0.2 } };
+  const c = synthesizeCursor([drag, hover], 5000);
+  expect(c.samples.filter((s) => s.interactionType !== "move").map((s) => [s.interactionType, s.timeMs, s.cx])).toEqual([
+    ["click", 1000, 0.2],
+    ["mouseup", 1000 + DRAG_MS, 0.8],
+  ]);
+  const held = c.samples.filter((s) => s.timeMs > 1000 && s.timeMs < 1000 + DRAG_MS);
+  expect(held.every((s, i) => i === 0 || s.cx >= held[i - 1]!.cx)).toBe(true);
+  expect(c.samples.find((s) => s.timeMs >= 3000)).toMatchObject({ cx: 0.5, cy: 0.2 });
+  const times = c.samples.map((s) => s.timeMs);
+  expect([...times].sort((a, b) => a - b)).toEqual(times);
+  // Zoom frames the drag between its two ends, and a hover is zoomed like a click.
+  expect(compileZooms([drag, hover], 5000).map((z) => z.focus)).toEqual([{ cx: 0.5, cy: 0.5 }, { cx: 0.5, cy: 0.2 }]);
+  expect(validateEvents([{ ...drag, to: { cx: 800, cy: 400 } }]).map((i) => i.path)).toEqual(["events[0].to"]);
 });
 
 test("unsorted, out-of-range and back-to-back events stay consistent", () => {

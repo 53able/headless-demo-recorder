@@ -26,6 +26,18 @@ test("source-specific mistakes are reported with their path", () => {
   expect(errors({ ...base, steps: [{ action: "fill", target: "#q" }] })).toEqual(["steps[0].value"]);
 });
 
+test("hover and drag: targets checked like click, and desktop needs physicalInput", () => {
+  expect(errors({ ...base, steps: [{ action: "hover", target: "#menu" }, { action: "drag", target: "#card", to: "#done" }] })).toEqual([]);
+  expect(errors({ ...base, steps: [{ action: "drag", target: "#card" }] })).toEqual(["steps[0].to"]);
+  expect(errors({ ...base, steps: [{ action: "drag", target: "#card", to: "@e3" }] })).toEqual(["steps[0].to"]);
+  expect(errors({ ...base, steps: [{ action: "drag", target: "#card", to: "text=Delete" }] })).toEqual(["steps[0]"]);
+  const desktop = { type: "desktop", app: "Finder" };
+  const drag = { action: "drag", target: { name: "a.txt" }, to: { name: "Documents" } };
+  expect(errors({ ...base, source: desktop, steps: [drag, { action: "hover", target: { name: "a.txt" } }] })).toEqual(["steps[0].action", "steps[1].action"]);
+  expect(errors({ ...base, source: { ...desktop, physicalInput: true }, steps: [drag] })).toEqual([]);
+  expect(errors({ ...base, source: { ...desktop, physicalInput: true }, steps: [{ ...drag, to: "@s1:e2" }] })).toEqual(["steps[0].to"]);
+});
+
 const urlErrors = (s: unknown, opts?: Parameters<typeof validateScenario>[1]) =>
   validateScenario(s, opts).filter((i) => i.level === "error").map((i) => i.path);
 

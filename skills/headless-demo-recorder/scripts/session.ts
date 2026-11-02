@@ -165,15 +165,20 @@ export type ServeHooks = {
  * latest observe (not another app's or an older snapshot), and the element it names goes through the
  * same irreversible-action guard as a selector or find query would. Returns issues; empty = allowed. */
 export function refIssues(step: unknown, config: SessionConfig, driver: Pick<Driver, "refLabel">): string[] {
-  const st = step as { action?: string; target?: unknown; value?: unknown; allowDestructive?: boolean };
-  if (typeof st?.target !== "string") return [];
-  const key = config.scenario.source.type === "desktop" ? st.target : browserRefKey(st.target);
-  if (!key) return [];
-  const label = driver.refLabel(key);
-  if (label === undefined) return [`step.target: ${st.target} is not a ref from this session's latest observe; run session observe and use a ref from it`];
-  const text = st.action === "select" && typeof st.value === "string" ? `${label} ${st.value}` : label;
-  if (looksDestructive(text) && !st.allowDestructive && !config.scenario.allowDestructive) {
-    return [`step: ${st.target} is "${label}", which looks irreversible. Choose another step, or after confirming it is harmless set "allowDestructive": true on this step`];
+  const st = step as { action?: string; target?: unknown; to?: unknown; value?: unknown; allowDestructive?: boolean };
+  if (!st || typeof st !== "object") return [];
+  // A drag's `to` is a target too: the drop zone ("Trash") can be the irreversible part.
+  for (const k of ["target", "to"] as const) {
+    const t = st[k];
+    if (typeof t !== "string") continue;
+    const key = config.scenario.source.type === "desktop" ? t : browserRefKey(t);
+    if (!key) continue;
+    const label = driver.refLabel(key);
+    if (label === undefined) return [`step.${k}: ${t} is not a ref from this session's latest observe; run session observe and use a ref from it`];
+    const text = st.action === "select" && typeof st.value === "string" ? `${label} ${st.value}` : label;
+    if (looksDestructive(text) && !st.allowDestructive && !config.scenario.allowDestructive) {
+      return [`step: ${t} is "${label}", which looks irreversible. Choose another step, or after confirming it is harmless set "allowDestructive": true on this step`];
+    }
   }
   return [];
 }

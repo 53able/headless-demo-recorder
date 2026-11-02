@@ -77,7 +77,10 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
     - WebView のアプリ（Tauri / Pake / Electron など）では、`{ "role": "scrollarea" }` のような role だけのクエリが、ページ内の多数の要素に当たって失敗しやすい。`session observe` で得たスクロール領域の参照を使う。
     - WebKit のなめらかなスクロールは、操作の 350ms 後には終わっていないことがある。`inspectSheet` のスクロールのコマが途中の位置を映していても、録画の後半で行き着いているかを確かめる。
 - `press`（キー）、`wait`（ミリ秒）、`mark`（字幕だけ）はどちらでも使える。`open`（URL を開く）はブラウザ専用。
-- ドラッグ、ホバー、座標指定のクリックは扱わない。agent-desktop ではこれらが `--headed`（物理入力）を要するため。
+- `hover`（`target` の上にカーソルを置く。クリックはしない）と `drag`（`target` を押して `to` まで動かし、離す）。`to` の書き方は `target` と同じで、不可逆な操作の検証も `to` の名前にかかる。
+  - ブラウザ: そのまま使える。`drag` はマウスイベント（pointer/mouse）で動かす UI には効くが、HTML5 のネイティブ DnD（`draggable` と `drop` イベント）は agent-browser 0.41.1 では発火しない（実測）。また実際のドロップは一瞬で終わるので、動画ではカーソルが動き終える前に要素が移る。
+  - デスクトップ: agent-desktop は `--headed`（実際のマウスカーソル）でしか送れない。その手の間は利用者のマウスが奪われ、触ると操作が壊れる。利用者の了承を得て、シナリオの `source` に `"physicalInput": true` を付けたときだけ `check` を通る。
+- 座標指定のクリックは扱わない。
 - 1つの録画は1つのウィンドウ（desktop）または1つのページ（browser）だけを映す。複数のアプリを1本に入れるときは、アプリごとに録画して composition で並べる。
 - browser で新しいタブを開く手（`target="_blank"` のリンクなど）は録画されない。そのような手は、開いたタブを閉じて録画中のタブに戻したうえで、`NEW_TAB` を含むエラーで失敗する。遷移先は `open` で同じタブに開く。
   - `--allow-origin` を指定していると、agent-browser 0.41.1 は新しいタブを開くクリックに応答を返さず、ページが `about:blank` になる（実測）。この状態からは戻せない。新しいタブを開くリンクは押さず、遷移先の URL を `open` で開く。セッションでこうなった場合は `session stop` して始め直す。
@@ -164,7 +167,7 @@ Codex で `doctor` の権限項目が `Operation not permitted`、または `ren
   - 確認したうえで無害なステップ（計算機の「すべて消去」など）は、**そのステップに** `"allowDestructive": true` を付ける。
   - シナリオ全体に付ける `allowDestructive` は、実際にその操作を行うデモに限る。必ず利用者の承認を得てから使う。
   - 判定は単語リストによる推定にすぎない。`check` を通過しても、そのステップが安全だとは保証されない。
-- agent-desktop はヘッドレスで動く。利用者が物理入力を許可しない限り、`--headed` を付けない。
+- agent-desktop はヘッドレスで動く。`--headed` を使うのは、`physicalInput: true` のシナリオの `hover` / `drag` だけ。`physicalInput` は利用者が物理入力を許可したときに限って付ける。
 - デスクトップ録画は実際のウィンドウを録る。上に重なった通知も映り込む。
 - `openscreen` をサブコマンドなし、または `--version` 付きで実行しない。GUI が起動する。`doctor` は `openscreen help` を使う。
 - `openscreen export --auto-zoom` は、ヘッドレス実行では効かない。ズームは操作ログから生成する。

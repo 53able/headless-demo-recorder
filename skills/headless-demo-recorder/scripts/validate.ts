@@ -1,6 +1,6 @@
 // Static scenario checks that run before anything is launched or recorded.
 
-import type { Composition, CompositionEdit, Scenario, Source, Step } from "./types.ts";
+import type { Composition, CompositionEdit, Scenario, Source, Step, Target } from "./types.ts";
 
 export type Issue = { path: string; level: "error" | "warning"; message: string };
 
@@ -11,9 +11,11 @@ const DESTRUCTIVE = /\b(delete|remove|send|submit|publish|post|purchase|buy|pay|
 /** Does this text read like an irreversible or outward-facing action? A word-list guess only. */
 export const looksDestructive = (text: string) => DESTRUCTIVE.test(text);
 
+const queryText = (t: Target) => (typeof t === "string" ? t : [t.role, t.name, t.text].filter(Boolean).join(" "));
 const targetText = (s: Step): string => {
   if ("target" in s && s.target) {
-    const t = typeof s.target === "string" ? s.target : [s.target.role, s.target.name, s.target.text].filter(Boolean).join(" ");
+    const t = queryText(s.target);
+    if (s.action === "drag" && s.to) return `${t} ${queryText(s.to)}`; // the drop target is the action ("Trash")
     return s.action === "select" ? `${t} ${s.value}` : t; // the chosen option is the action ("Delete account")
   }
   if (s.action === "press") return s.key;
@@ -62,7 +64,7 @@ function urlChecker(opts: ValidateOptions, err: ErrFn, reportBadOrigins = true) 
   };
 }
 
-const STEP_ACTIONS = ["click", "fill", "select", "press", "scroll", "open", "wait", "mark"];
+const STEP_ACTIONS = ["click", "fill", "select", "hover", "drag", "press", "scroll", "open", "wait", "mark"];
 const SCROLL_DIRECTIONS = ["up", "down", "left", "right"];
 /** agent-browser resolves all of these as snapshot refs (verified on 0.41.1): "@e3", "ref=e3", "e3". */
 const BROWSER_REF = /^(?:@|ref=)?e(\d+)$/;
@@ -75,10 +77,15 @@ export function browserRefKey(target: string): string | undefined {
 /** A session step as it will be checked AND executed: string targets trimmed, browser refs spelled "@eN".
  * Checking one string and running another is how a ref slips past the guards. */
 export function normalizeSessionStep(raw: unknown, src: Partial<Source> | undefined): unknown {
-  const st = raw as { target?: unknown } | null;
-  if (!st || typeof st !== "object" || typeof st.target !== "string") return raw;
-  const t = st.target.trim();
-  return { ...st, target: src?.type === "browser" ? (browserRefKey(t) ?? t) : t };
+  if (!raw || typeof raw !== "object") return raw;
+  const st = { ...(raw as Record<string, unknown>) };
+  for (const k of ["target", "to"]) {
+    const v = st[k];
+    if (typeof v !== "string") continue;
+    const t = v.trim();
+    st[k] = src?.type === "browser" ? (browserRefKey(t) ?? t) : t;
+  }
+  return st;
 }
 export const SESSION_MAX_WAIT_MS = 60_000;
 
@@ -94,7 +101,10 @@ export function validateStep(raw: unknown, src: Partial<Source> | undefined, opt
     return issues;
   }
   const urlCheck = urlChecker(opts, err, false);
-  if ((st.action === "click" || st.action === "fill" || st.action === "select") && !st.target) err(`${p}.target`, "required");
+  if ((st.action === "click" || st.action === "fill" || st.action === "select" || st.action === "hover" || st.action === "drag") && !st.target) err(`${p}.target`, "required");
+  if (st.action === "drag" && !st.to) err(`${p}.to`, "required");
+  if ((st.action === "hover" || st.action === "drag") && src?.type === "desktop" && (src as { physicalInput?: unknown }).physicalInput !== true)
+    err(`${p}.action`, `desktop ${st.action} moves the real pointer (agent-desktop --headed); set "physicalInput": true on the source after the user agrees`);
   if ((st.action === "fill" || st.action === "select") && typeof st.value !== "string") err(`${p}.value`, "required string");
   if (st.action === "press" && (typeof st.key !== "string" || !st.key)) err(`${p}.key`, "required string");
   if (st.action === "wait" && !(num(st.ms) && st.ms >= 0)) err(`${p}.ms`, "required number >= 0");
@@ -113,11 +123,14 @@ export function validateStep(raw: unknown, src: Partial<Source> | undefined, opt
   }
   if (src?.type === "desktop" && st.action === "open") err(`${p}.action`, "open is browser-only");
   if (st.action === "open") urlCheck(`${p}.url`, st.url);
-  if (src?.type === "browser" && "target" in st && st.target !== undefined && typeof st.target !== "string") err(`${p}.target`, "browser targets are selector strings");
-  if (src?.type === "desktop" && !opts.liveRefs && "target" in st && typeof st.target === "string")
-    err(`${p}.target`, "desktop targets are find queries ({role, name, text, exact}); ref strings are valid only in `session act`, from `session observe`");
-  if (src?.type === "browser" && !opts.liveRefs && "target" in st && typeof st.target === "string" && browserRefKey(st.target))
-    err(`${p}.target`, "snapshot refs (@eN) do not survive into the recording session; use a CSS/text selector (refs are valid only in `session act`)");
+  for (const k of ["target", "to"] as const) {
+    const t = (st as Record<string, unknown>)[k];
+    if (src?.type === "browser" && t !== undefined && typeof t !== "string") err(`${p}.${k}`, "browser targets are selector strings");
+    if (src?.type === "desktop" && !opts.liveRefs && typeof t === "string")
+      err(`${p}.${k}`, "desktop targets are find queries ({role, name, text, exact}); ref strings are valid only in `session act`, from `session observe`");
+    if (src?.type === "browser" && !opts.liveRefs && typeof t === "string" && browserRefKey(t))
+      err(`${p}.${k}`, "snapshot refs (@eN) do not survive into the recording session; use a CSS/text selector (refs are valid only in `session act`)");
+  }
   if (DESTRUCTIVE.test(targetText(st)) && !allowDestructive && !st.allowDestructive)
     err(`${p}`, `looks irreversible ("${targetText(st)}"). Remove it, or after confirming it is harmless set "allowDestructive": true on this step (or on the scenario for real destructive demos, with user approval)`);
   if ("caption" in st && st.caption && st.caption.length > 40) warn(`${p}.caption`, "longer than 40 chars; it may wrap or overflow");
@@ -159,7 +172,7 @@ export function validateScenario(s: unknown, opts: ValidateOptions = {}): Issue[
   return issues;
 }
 
-const EVENT_KINDS = ["click", "type", "press", "scroll", "navigate", "wait", "mark"];
+const EVENT_KINDS = ["click", "type", "hover", "drag", "press", "scroll", "navigate", "wait", "mark"];
 const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
 const in01 = (v: unknown): boolean => num(v) && v >= 0 && v <= 1;
@@ -178,9 +191,10 @@ export function validateEvents(raw: unknown, at = "events"): Issue[] {
     if (!e || typeof e !== "object") return err(p, "must be an object");
     if (!num(e.tMs) || e.tMs < 0) err(`${p}.tMs`, "must be a number >= 0 (ms on the video timeline)");
     if (!EVENT_KINDS.includes(e.kind)) err(`${p}.kind`, `must be one of ${EVENT_KINDS.join(", ")}`);
-    if (e.point !== undefined) {
-      if (!(num(e.point?.cx) && num(e.point?.cy))) err(`${p}.point`, "must be {cx, cy}");
-      else if (!in01(e.point.cx) || !in01(e.point.cy)) err(`${p}.point`, "cx and cy must be fractions of the frame (0..1), not pixels");
+    for (const k of ["point", "to"] as const) {
+      if (e[k] === undefined) continue;
+      if (!(num(e[k]?.cx) && num(e[k]?.cy))) err(`${p}.${k}`, "must be {cx, cy}");
+      else if (!in01(e[k].cx) || !in01(e[k].cy)) err(`${p}.${k}`, "cx and cy must be fractions of the frame (0..1), not pixels");
     }
     if (e.rect !== undefined) {
       if (!["x", "y", "w", "h"].every((k) => num(e.rect?.[k]))) err(`${p}.rect`, "must be {x, y, w, h}");

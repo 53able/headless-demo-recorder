@@ -3,7 +3,7 @@ import { copyFile, lstat, rename, rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { bundleRefusal, parseBundleId } from "../appguard.ts";
 import { abortSignal, exists, ffprobe, log, parseNdjson, run, runOk, sleep, spawnEnv, toMp4 } from "../exec.ts";
-import { centerOf } from "../compile.ts";
+import { centerOf, DRAG_MS } from "../compile.ts";
 import type { ActionEvent, CaptureResult, DesktopSource, DesktopTarget, NRect, Step } from "../types.ts";
 import { runSteps, stepWaitMs, type Driver } from "./driver.ts";
 
@@ -201,6 +201,21 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
           if (step.action === "click") await ad("click", ref);
           else if (step.action === "fill") await ad("type", ref, step.value);
           else await ad("select", ref, step.value);
+          break;
+        }
+        case "hover":
+        case "drag": {
+          // agent-desktop delivers these only with the real pointer; validate requires source.physicalInput.
+          if (!src.physicalInput) throw new Error(`desktop ${step.action} needs "physicalInput": true on the source`);
+          const from = await locate(step.target);
+          const to = step.action === "drag" ? await locate(step.to) : undefined;
+          events.push({
+            tMs: now(), kind: step.action, label: JSON.stringify(step.action === "drag" ? [step.target, step.to] : step.target), caption,
+            rect: from.rect, point: from.point, to: to?.point, zoom: step.zoom,
+          });
+          await guard();
+          if (step.action === "hover") await ad("hover", from.ref, "--headed");
+          else await ad("drag", "--from", from.ref, "--to", to!.ref, "--duration", String(DRAG_MS), "--timeout-ms", String(DRAG_MS + 5000), "--headed");
           break;
         }
         case "scroll": {

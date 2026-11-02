@@ -204,6 +204,9 @@ test("refIssues: every desktop string is a ref and must come from the recorded w
   expect(refIssues({ action: "click", target: "@other:e1" }, config, driver)).toHaveLength(1); // e.g. another app's snapshot
   expect(refIssues({ action: "click", target: "@s1:e2" }, config, driver)).toHaveLength(1);
   expect(refIssues({ action: "click", target: { role: "button", name: "7" } }, config, driver)).toEqual([]); // find queries are checked by validateStep
+  // A drag's drop target is a ref too, checked the same way.
+  expect(refIssues({ action: "drag", target: "@s1:e1", to: "@s1:e2" }, config, driver)).toHaveLength(1);
+  expect(refIssues({ action: "drag", target: "@s1:e1", to: "@old:e9" }, config, driver)).toHaveLength(1);
   // A browser selector is not a ref.
   const browser = { scenario: { name: "b", source: { type: "browser", url: "https://example.com/" }, output: { path: "b.mp4" } } } as SessionConfig;
   expect(refIssues({ action: "click", target: "#go" }, browser, driver)).toEqual([]);
