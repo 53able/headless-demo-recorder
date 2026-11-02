@@ -26,6 +26,9 @@ export function fitRect(srcW: number, srcH: number, cellPx: { w: number; h: numb
   return { x: Math.floor((cellPx.w - w) / 2), y: Math.floor((cellPx.h - h) / 2), w, h };
 }
 
+/** Recordings of one run (a composition run, or one `--group` of sessions) start within this window. */
+export const MAX_ALIGN_SKEW_MS = 10 * 60_000;
+
 /** How much later each recording started than the last one to start. Only captures from one
  * composition run (same `runId`) are aligned; anything else (re-captured alone, recorded on a
  * different day) gets 0 — a wall-clock difference of minutes would empty the segment. */
@@ -34,7 +37,19 @@ export function alignLeadMs(captures: Record<string, AlignedCapture>): Record<st
   const sameRun = caps.every((c) => c.runId !== undefined && c.t0EpochMs !== undefined && c.runId === caps[0]!.runId);
   if (!sameRun) return Object.fromEntries(Object.keys(captures).map((n) => [n, 0]));
   const latest = Math.max(...caps.map((c) => c.t0EpochMs!));
+  // A session group name can be reused on another day; starts that far apart are not one run.
+  if (latest - Math.min(...caps.map((c) => c.t0EpochMs!)) > MAX_ALIGN_SKEW_MS) return Object.fromEntries(Object.keys(captures).map((n) => [n, 0]));
   return Object.fromEntries(Object.entries(captures).map(([n, c]) => [n, latest - c.t0EpochMs!]));
+}
+
+/** Why a run's recordings were not time-aligned although they claim to be one run, if that happened. */
+export function alignWarning(captures: Record<string, AlignedCapture>): string | undefined {
+  const caps = Object.values(captures);
+  if (!caps.every((c) => c.runId !== undefined && c.t0EpochMs !== undefined && c.runId === caps[0]!.runId)) return undefined;
+  const skew = Math.max(...caps.map((c) => c.t0EpochMs!)) - Math.min(...caps.map((c) => c.t0EpochMs!));
+  return skew > MAX_ALIGN_SKEW_MS
+    ? `recordings of ${caps[0]!.runId} started ${Math.round(skew / 1000)}s apart (more than ${MAX_ALIGN_SKEW_MS / 60_000} min), so they were not time-aligned; record them again together`
+    : undefined;
 }
 
 /** Streams whose segment holds less than one frame (startMs past the aligned end); ffmpeg would silently emit no frames. */
