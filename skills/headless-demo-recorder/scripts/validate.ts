@@ -1,6 +1,6 @@
 // Static scenario checks that run before anything is launched or recorded.
 
-import type { Composition, CompositionEdit, Scenario, Step } from "./types.ts";
+import type { Composition, CompositionEdit, Scenario, Source, Step } from "./types.ts";
 
 export type Issue = { path: string; level: "error" | "warning"; message: string };
 
@@ -8,8 +8,14 @@ export type Issue = { path: string; level: "error" | "warning"; message: string 
 // refused unless the scenario sets "allowDestructive": true.
 const DESTRUCTIVE = /\b(delete|remove|send|submit|publish|post|purchase|buy|pay|order|transfer|unsubscribe|deactivate|erase|format)\b|削除|送信|公開|投稿|購入|支払|注文|送金|退会|消去|初期化/i;
 
+/** Does this text read like an irreversible or outward-facing action? A word-list guess only. */
+export const looksDestructive = (text: string) => DESTRUCTIVE.test(text);
+
 const targetText = (s: Step): string => {
-  if ("target" in s) return typeof s.target === "string" ? s.target : [s.target.role, s.target.name, s.target.text].filter(Boolean).join(" ");
+  if ("target" in s && s.target) {
+    const t = typeof s.target === "string" ? s.target : [s.target.role, s.target.name, s.target.text].filter(Boolean).join(" ");
+    return s.action === "select" ? `${t} ${s.value}` : t; // the chosen option is the action ("Delete account")
+  }
   if (s.action === "press") return s.key;
   if (s.action === "open") return s.url;
   return "";
@@ -18,6 +24,9 @@ const targetText = (s: Step): string => {
 export type ValidateOptions = {
   /** User-supplied origins (`--allow-origin`). When set, every URL must match one by scheme+host+port. */
   allowOrigins?: string[];
+  /** Inside a `session`: refs from `session observe` (browser `@eN`) are valid, because the same
+   * browser session that produced them performs the step. */
+  liveRefs?: boolean;
 };
 
 const DEFAULT_PORT: Record<string, string> = { "http:": "80", "https:": "443" };
@@ -40,6 +49,81 @@ export function allowedDomains(origins: string[]): string {
   return [...new Set(origins.map((o) => new URL(o).hostname))].join(",");
 }
 
+type ErrFn = (path: string, message: string) => void;
+
+/** Checks a URL against `--allow-origin`; reports through `err`. */
+function urlChecker(opts: ValidateOptions, err: ErrFn, reportBadOrigins = true) {
+  const allowed = opts.allowOrigins?.map((o) => ({ o, n: normalizeOrigin(o) }));
+  if (reportBadOrigins) allowed?.filter((a) => !a.n).forEach((a) => err("allowOrigins", `"${a.o}" is not an http(s) origin`));
+  return (path: string, url: unknown) => {
+    const n = typeof url === "string" ? normalizeOrigin(url) : undefined;
+    if (!n) return err(path, "must be an http(s) URL");
+    if (opts.allowOrigins && !allowed!.some((a) => a.n === n)) err(path, `origin ${n} is not in --allow-origin (${opts.allowOrigins.join(", ") || "none"}); nothing was launched`);
+  };
+}
+
+const STEP_ACTIONS = ["click", "fill", "select", "press", "scroll", "open", "wait", "mark"];
+const SCROLL_DIRECTIONS = ["up", "down", "left", "right"];
+/** agent-browser resolves all of these as snapshot refs (verified on 0.41.1): "@e3", "ref=e3", "e3". */
+const BROWSER_REF = /^(?:@|ref=)?e(\d+)$/;
+/** The canonical "@eN" key for a browser ref, or undefined if the string is a selector. */
+export function browserRefKey(target: string): string | undefined {
+  const m = BROWSER_REF.exec(target.trim()); // agent-browser trims, so " @e3" is a ref too
+  return m ? `@e${m[1]}` : undefined;
+}
+
+/** A session step as it will be checked AND executed: string targets trimmed, browser refs spelled "@eN".
+ * Checking one string and running another is how a ref slips past the guards. */
+export function normalizeSessionStep(raw: unknown, src: Partial<Source> | undefined): unknown {
+  const st = raw as { target?: unknown } | null;
+  if (!st || typeof st !== "object" || typeof st.target !== "string") return raw;
+  const t = st.target.trim();
+  return { ...st, target: src?.type === "browser" ? (browserRefKey(t) ?? t) : t };
+}
+export const SESSION_MAX_WAIT_MS = 60_000;
+
+/** One step, as a scenario's `steps[i]` or a `session act` step. `allowDestructive` is the scenario-level approval. */
+export function validateStep(raw: unknown, src: Partial<Source> | undefined, opts: ValidateOptions = {}, allowDestructive = false, p = "step"): Issue[] {
+  const issues: Issue[] = [];
+  const err: ErrFn = (path, message) => issues.push({ path, level: "error", message });
+  const warn: ErrFn = (path, message) => issues.push({ path, level: "warning", message });
+  const st = raw as Step;
+  if (!st || typeof st !== "object") return [{ path: p, level: "error", message: "must be a step object" }];
+  if (!STEP_ACTIONS.includes(st.action)) {
+    err(`${p}.action`, `must be one of ${STEP_ACTIONS.join(", ")}`);
+    return issues;
+  }
+  const urlCheck = urlChecker(opts, err, false);
+  if ((st.action === "click" || st.action === "fill" || st.action === "select") && !st.target) err(`${p}.target`, "required");
+  if ((st.action === "fill" || st.action === "select") && typeof st.value !== "string") err(`${p}.value`, "required string");
+  if (st.action === "press" && (typeof st.key !== "string" || !st.key)) err(`${p}.key`, "required string");
+  if (st.action === "wait" && !(num(st.ms) && st.ms >= 0)) err(`${p}.ms`, "required number >= 0");
+  // A session serializes requests; an unbounded wait would hold the recorder (and stop) hostage.
+  else if (st.action === "wait" && opts.liveRefs && st.ms > SESSION_MAX_WAIT_MS) err(`${p}.ms`, `at most ${SESSION_MAX_WAIT_MS} in a session; send several waits`);
+  if (st.action === "mark" && typeof st.caption !== "string") err(`${p}.caption`, "required string");
+  if ("waitMs" in st && st.waitMs !== undefined) {
+    if (!(num(st.waitMs) && st.waitMs >= 0)) err(`${p}.waitMs`, "must be a number >= 0");
+    else if (opts.liveRefs && st.waitMs > SESSION_MAX_WAIT_MS) err(`${p}.waitMs`, `at most ${SESSION_MAX_WAIT_MS} in a session`);
+  }
+  if (st.action === "scroll") {
+    if (st.direction !== undefined && !SCROLL_DIRECTIONS.includes(st.direction)) err(`${p}.direction`, `must be one of ${SCROLL_DIRECTIONS.join(", ")}`);
+    if (st.px !== undefined && !(num(st.px) && st.px > 0)) err(`${p}.px`, "must be a number > 0");
+    if (src?.type === "desktop" && !st.target) err(`${p}.target`, "desktop scroll needs the element to scroll (a find query or a session ref)");
+    if (src?.type === "browser" && st.target !== undefined) err(`${p}.target`, "browser scroll scrolls the page; omit target");
+  }
+  if (src?.type === "desktop" && st.action === "open") err(`${p}.action`, "open is browser-only");
+  if (st.action === "open") urlCheck(`${p}.url`, st.url);
+  if (src?.type === "browser" && "target" in st && st.target !== undefined && typeof st.target !== "string") err(`${p}.target`, "browser targets are selector strings");
+  if (src?.type === "desktop" && !opts.liveRefs && "target" in st && typeof st.target === "string")
+    err(`${p}.target`, "desktop targets are find queries ({role, name, text, exact}); ref strings are valid only in `session act`, from `session observe`");
+  if (src?.type === "browser" && !opts.liveRefs && "target" in st && typeof st.target === "string" && browserRefKey(st.target))
+    err(`${p}.target`, "snapshot refs (@eN) do not survive into the recording session; use a CSS/text selector (refs are valid only in `session act`)");
+  if (DESTRUCTIVE.test(targetText(st)) && !allowDestructive && !st.allowDestructive)
+    err(`${p}`, `looks irreversible ("${targetText(st)}"). Remove it, or after confirming it is harmless set "allowDestructive": true on this step (or on the scenario for real destructive demos, with user approval)`);
+  if ("caption" in st && st.caption && st.caption.length > 40) warn(`${p}.caption`, "longer than 40 chars; it may wrap or overflow");
+  return issues;
+}
+
 export function validateScenario(s: unknown, opts: ValidateOptions = {}): Issue[] {
   const issues: Issue[] = [];
   const err = (path: string, message: string) => issues.push({ path, level: "error", message });
@@ -47,14 +131,7 @@ export function validateScenario(s: unknown, opts: ValidateOptions = {}): Issue[
   if (!s || typeof s !== "object") return [{ path: "$", level: "error", message: "scenario must be a JSON object" }];
   const sc = s as Partial<Scenario>;
 
-  const allowed = opts.allowOrigins?.map((o) => ({ o, n: normalizeOrigin(o) }));
-  allowed?.filter((a) => !a.n).forEach((a) => err("allowOrigins", `"${a.o}" is not an http(s) origin`));
-  const checkUrl = (path: string, url: unknown) => {
-    const n = typeof url === "string" ? normalizeOrigin(url) : undefined;
-    if (!n) return err(path, "must be an http(s) URL");
-    if (allowed && !allowed.some((a) => a.n === n)) err(path, `origin ${n} is not in --allow-origin (${opts.allowOrigins!.join(", ") || "none"}); nothing was launched`);
-  };
-
+  const checkUrl = urlChecker(opts, err);
   if (!sc.name || !/^[\w.-]+$/.test(sc.name)) err("name", "required, [A-Za-z0-9_.-]+");
   if (!sc.output?.path) err("output.path", "required (.mp4 or .gif)");
   else if (!/\.(mp4|gif)$/i.test(sc.output.path)) err("output.path", "must end with .mp4 or .gif");
@@ -74,21 +151,7 @@ export function validateScenario(s: unknown, opts: ValidateOptions = {}): Issue[
   if (!Array.isArray(steps)) err("steps", "must be an array");
   else {
     if (src?.type === "file" && steps.length) err("steps", "file sources cannot run steps");
-    steps.forEach((st, i) => {
-      const p = `steps[${i}]`;
-      const known = ["click", "fill", "press", "scroll", "open", "wait", "mark"];
-      if (!known.includes(st?.action)) return err(`${p}.action`, `must be one of ${known.join(", ")}`);
-      if ((st.action === "click" || st.action === "fill") && !st.target) err(`${p}.target`, "required");
-      if (st.action === "fill" && typeof st.value !== "string") err(`${p}.value`, "required string");
-      if (src?.type === "desktop" && (st.action === "scroll" || st.action === "open")) err(`${p}.action`, `${st.action} is browser-only`);
-      if (st.action === "open") checkUrl(`${p}.url`, st.url);
-      if (src?.type === "browser" && "target" in st && typeof st.target !== "string") err(`${p}.target`, "browser targets are selector strings");
-      if (src?.type === "browser" && "target" in st && typeof st.target === "string" && /^@e\d+$/.test(st.target))
-        err(`${p}.target`, "snapshot refs (@eN) do not survive into the recording session; use a CSS/text selector");
-      if (DESTRUCTIVE.test(targetText(st)) && !sc.allowDestructive && !st.allowDestructive)
-        err(`${p}`, `looks irreversible ("${targetText(st)}"). Remove it, or after confirming it is harmless set "allowDestructive": true on this step (or on the scenario for real destructive demos, with user approval)`);
-      if ("caption" in st && st.caption && st.caption.length > 40) warn(`${p}.caption`, "longer than 40 chars; it may wrap or overflow");
-    });
+    steps.forEach((st, i) => issues.push(...validateStep(st, src, opts, sc.allowDestructive === true, `steps[${i}]`)));
   }
   const e = sc.edit;
   if (e?.zoom?.depth !== undefined && ![1, 2, 3, 4, 5, 6].includes(e.zoom.depth)) err("edit.zoom.depth", "must be 1..6");

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isComposition, validateComposition, validateEvents, validateScenario } from "./validate.ts";
+import { isComposition, validateComposition, validateEvents, validateScenario, validateStep } from "./validate.ts";
 
 const base = { name: "demo", source: { type: "browser", url: "https://example.com" }, output: { path: "out/demo.mp4" } };
 const errors = (s: unknown) => validateScenario(s).filter((i) => i.level === "error").map((i) => i.path);
@@ -19,7 +19,9 @@ test("irreversible-looking steps need allowDestructive", () => {
 
 test("source-specific mistakes are reported with their path", () => {
   expect(errors({ ...base, steps: [{ action: "click", target: "@e3" }] })).toEqual(["steps[0].target"]);
-  expect(errors({ ...base, source: { type: "desktop", app: "Notes" }, steps: [{ action: "scroll" }] })).toEqual(["steps[0].action"]);
+  // Desktop scroll needs the element to scroll; open stays browser-only.
+  expect(errors({ ...base, source: { type: "desktop", app: "Notes" }, steps: [{ action: "scroll" }] })).toEqual(["steps[0].target"]);
+  expect(errors({ ...base, source: { type: "desktop", app: "Notes" }, steps: [{ action: "open", url: "https://example.com" }] })).toEqual(["steps[0].action"]);
   expect(errors({ ...base, output: { path: "out/demo.mov" } })).toEqual(["output.path"]);
   expect(errors({ ...base, steps: [{ action: "fill", target: "#q" }] })).toEqual(["steps[0].value"]);
 });
@@ -49,9 +51,11 @@ test("allowOrigins matches scheme, host and port", () => {
   expect(urlErrors(base, { allowOrigins: ["example.com"] })).toEqual(["allowOrigins", "source.url"]);
 });
 
-test("desktop string refs, trims and idle speed-ups are allowed by default", () => {
-  const desk = { ...base, source: { type: "desktop", app: "Calculator" }, steps: [{ action: "click", target: "@e1" }, { action: "click", target: { role: "button", name: "1" } }] };
-  expect(urlErrors(desk)).toEqual([]);
+test("desktop ref strings only inside a session; trims and idle speed-ups are allowed by default", () => {
+  const desk = { ...base, source: { type: "desktop", app: "Calculator" }, steps: [{ action: "click", target: "@s1:e1" }, { action: "click", target: { role: "button", name: "1" } }] };
+  // Outside a session nothing ties a ref string to the recorded window, so find queries are required.
+  expect(urlErrors(desk)).toEqual(["steps[0].target"]);
+  expect(validateStep({ action: "click", target: "@s1:e1" }, desk.source as never, { liveRefs: true })).toEqual([]);
   expect(urlErrors({ ...base, edit: { trim: [{ startMs: 0, endMs: 100 }], idleSpeedupMs: 1500 } })).toEqual([]);
 });
 
@@ -120,4 +124,37 @@ test("size must be even-friendly integers", () => {
 
 test("edit keys that break time mapping are rejected", () => {
   for (const k of ["trim", "idleSpeedupMs", "idleSpeed", "speechCaptions", "redact"]) expect(compErrors({ ...comp, edit: { ...comp.edit, [k]: [] } })).toEqual([`edit.${k}`]);
+});
+
+test("desktop scroll and select take a target; browser scroll does not", () => {
+  const desktop = { ...base, source: { type: "desktop", app: "Notes" } };
+  expect(errors({ ...desktop, steps: [{ action: "scroll", target: { role: "scrollarea" }, direction: "left", px: 200 }] })).toEqual([]);
+  expect(errors({ ...desktop, steps: [{ action: "scroll", target: { role: "scrollarea" }, direction: "sideways" }] })).toEqual(["steps[0].direction"]);
+  expect(errors({ ...base, steps: [{ action: "scroll", target: "#list" }] })).toEqual(["steps[0].target"]);
+  expect(errors({ ...base, steps: [{ action: "select", target: "#size", value: "L" }] })).toEqual([]);
+  expect(errors({ ...base, steps: [{ action: "select", target: "#size" }] })).toEqual(["steps[0].value"]);
+  // The chosen option is the action: picking "Delete account" from a menu is guarded like a button.
+  expect(errors({ ...base, steps: [{ action: "select", target: "#action", value: "Delete account" }] })).toEqual(["steps[0]"]);
+});
+
+test("session steps: refs from session observe are valid only with liveRefs", () => {
+  const src = base.source as { type: "browser"; url: string };
+  const errs = (step: unknown, liveRefs: boolean) => validateStep(step, src, { liveRefs }).filter((i) => i.level === "error").map((i) => i.path);
+  expect(errs({ action: "click", target: "@e3" }, false)).toEqual(["step.target"]);
+  expect(errs({ action: "click", target: "@e3" }, true)).toEqual([]);
+  // The destructive guard and the origin check still apply in a session.
+  expect(errs({ action: "click", target: "text=Delete" }, true)).toEqual(["step"]);
+  expect(validateStep({ action: "open", url: "https://evil.example" }, src, { allowOrigins: ["https://example.com"], liveRefs: true }).map((i) => i.path)).toEqual(["step.url"]);
+  expect(errs({ action: "jump" }, true)).toEqual(["step.action"]);
+  // A session serializes steps; a wait is bounded so it cannot hold the recorder.
+  expect(errs({ action: "wait", ms: 60_001 }, true)).toEqual(["step.ms"]);
+  expect(errs({ action: "wait", ms: 60_001 }, false)).toEqual([]);
+  expect(errs({ action: "mark", caption: "x", waitMs: 60_001 }, true)).toEqual(["step.waitMs"]);
+  expect(errs({ action: "mark", caption: "x", waitMs: -1 }, false)).toEqual(["step.waitMs"]);
+  // agent-browser also takes "ref=e3" and "e3" as refs; outside a session they are refused like "@e3".
+  for (const t of ["ref=e3", "e3", " @e3", "@e3 "]) {
+    expect(errs({ action: "click", target: t }, false)).toEqual(["step.target"]);
+    expect(errs({ action: "click", target: t }, true)).toEqual([]);
+  }
+  expect(errs(null, true)).toEqual(["step"]);
 });
