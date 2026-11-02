@@ -56,11 +56,11 @@
   ],
   "edit": {
     "zoom": {
-      "depth": 2,
+      "depth": 1,
       "holdMs": 1200,
       "mergeDistance": 0.6
     },
-    "captionFontSize": 40
+    "captionFontSize": 72
   },
   "output": {
     "path": "out/calculator.gif",

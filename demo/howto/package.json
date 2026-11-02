@@ -1,0 +1,15 @@
+{
+  "name": "headless-demo-recorder-howto",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@wterm/dom": "0.5.7"
+  },
+  "scripts": {
+    "typecheck": "bunx tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^7.0.2"
+  }
+}

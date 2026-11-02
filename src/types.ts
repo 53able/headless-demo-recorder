@@ -24,6 +24,10 @@ export type CaptureResult = {
   events: ActionEvent[];
   /** Real pointer telemetry exists (only true for human-driven OpenScreen recordings). */
   realCursor: boolean;
+  /** Wall-clock time of video t=0; aligns parallel captures. */
+  t0EpochMs?: number;
+  /** Set by a composition run; captures from different runs are joined without time alignment. */
+  runId?: string;
 };
 
 // ---- Scenario (what an LLM agent writes) ----
@@ -105,5 +109,23 @@ export type Scenario = {
   source: Source;
   steps?: Step[];
   edit?: EditPlan;
+  output: Output;
+};
+
+// ---- Composition (several scenarios recorded together, joined into one video) ----
+
+/** Edit keys that make sense across streams; trim/idle speed-ups/speech/plan-level redact would break inspect's time mapping. */
+export type CompositionEdit = Pick<EditPlan, "zoom" | "syntheticCursor" | "stepCaptions" | "captionFontSize" | "titleFontSize" | "titles" | "style">;
+/** startMs/endMs are on the aligned timeline (after leading offsets are removed). */
+export type SceneStream = { scenario: string; startMs?: number; endMs?: number };
+/** single: 1 stream; side-by-side: 2 (left, right). */
+export type Scene = { layout: "single" | "side-by-side"; streams: SceneStream[] };
+export type Composition = {
+  name: string;
+  /** Scenario JSON paths, relative to the current directory. */
+  scenarios: string[];
+  scenes: Scene[];
+  size?: [number, number];
+  edit?: CompositionEdit;
   output: Output;
 };

@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { access } from "node:fs/promises";
+
+export const exists = (p: string) => access(p).then(() => true, () => false);
 
 export type RunResult = { code: number; stdout: string; stderr: string };
 
@@ -24,13 +27,20 @@ export function childEnv(): Record<string, string> {
   return env;
 }
 
+/** Environment for every child process. Electron-based hosts (e.g. T3 Code) export
+ * ELECTRON_RUN_AS_NODE=1, which makes the Electron `openscreen` binary start as plain Node. */
+export function spawnEnv(env: Record<string, string | undefined> = process.env): Record<string, string | undefined> {
+  const { ELECTRON_RUN_AS_NODE: _, ...rest } = env;
+  return rest;
+}
+
 type RunOpts = { input?: string; timeoutMs?: number; env?: Record<string, string>; cleanup?: boolean };
 
 /** Run a command to completion. Never goes through a shell. */
 export function run(cmd: string, args: string[], opts: RunOpts = {}): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     if (!opts.cleanup && abortSignal.aborted) return reject(abortSignal.reason);
-    const p = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], ...(opts.env ? { env: opts.env } : {}) });
+    const p = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env: spawnEnv(opts.env) });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -119,12 +129,61 @@ export async function ffprobe(path: string): Promise<Probe> {
   };
 }
 
-/** Normalize any input video to constant-frame-rate H.264 MP4 that OpenScreen can decode. */
-export async function toMp4(input: string, output: string): Promise<void> {
-  await runOk("ffmpeg", [
-    "-y", "-v", "error", "-i", input,
+/** ffmpeg argv for `toMp4`. `startMs > 0` drops that much from the head (`-ss` before `-i`). */
+export function toMp4Args(input: string, output: string, opts: { startMs?: number } = {}): string[] {
+  return [
+    "-y", "-v", "error", ...(opts.startMs && opts.startMs > 0 ? ["-ss", String(opts.startMs / 1000)] : []), "-i", input,
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
     "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", "-r", "30",
     "-c:a", "aac", "-movflags", "+faststart", output,
-  ]);
+  ];
+}
+
+/** Normalize any input video to constant-frame-rate H.264 MP4 that OpenScreen can decode. */
+export async function toMp4(input: string, output: string, opts: { startMs?: number } = {}): Promise<void> {
+  await runOk("ffmpeg", toMp4Args(input, output, opts));
+}
+
+/** Rendezvous for `n` parallel captures. `leave()` counts a party that will never arrive.
+ * Releases on timeout too (with a warning) so one stuck capture cannot hang the others. */
+export function barrier(n: number, timeoutMs: number): { arrive(): Promise<void>; leave(): void; fail(reason: unknown): void } {
+  let count = 0;
+  let failed: unknown;
+  const waiters: { resolve(): void; reject(e: unknown): void }[] = [];
+  const release = () => waiters.splice(0).forEach((w) => w.resolve());
+  const bump = () => {
+    if (++count >= n) release();
+  };
+  return {
+    arrive() {
+      if (abortSignal.aborted) return Promise.reject(abortSignal.reason);
+      if (failed !== undefined) return Promise.reject(failed);
+      return new Promise<void>((resolve, reject) => {
+        const settle = () => {
+          clearTimeout(timer);
+          abortSignal.removeEventListener("abort", onAbort);
+        };
+        const done = () => {
+          settle();
+          resolve();
+        };
+        const onAbort = () => {
+          settle();
+          reject(abortSignal.reason);
+        };
+        const timer = setTimeout(() => {
+          this.fail(new Error(`barrier timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        abortSignal.addEventListener("abort", onAbort, { once: true });
+        waiters.push({ resolve: done, reject: (e) => (settle(), reject(e)) });
+        bump();
+      });
+    },
+    leave: bump,
+    /** A party failed before arriving: everyone waiting (or arriving later) is rejected instead of recording alone. */
+    fail(reason) {
+      failed = reason;
+      waiters.splice(0).forEach((w) => w.reject(reason));
+    },
+  };
 }

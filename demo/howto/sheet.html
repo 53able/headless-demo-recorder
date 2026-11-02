@@ -1,0 +1,36 @@
+<!doctype html><meta charset="utf-8"><title>inspect-sheet</title>
+<!-- sheet.html?src=<path under out/>&n=<tiles to show, default 4>[&rows=<rows in the sheet>] : an inspect sheet re-laid as a 2-column grid -->
+<style>html,body{margin:0;height:100%;background:#1e1e2e;color:#e6e6e6;font:22px -apple-system,sans-serif}
+body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+.grid{display:grid;grid-template-columns:repeat(2,520px);gap:12px}
+.t{width:520px;border-radius:6px;background-repeat:no-repeat}</style>
+<div id="label"></div><div class="grid"></div>
+<script>
+const q = new URLSearchParams(location.search);
+const src = q.get("src");
+const n = Math.max(1, Number(q.get("n")) || 4);
+document.getElementById("label").textContent = src ? `out/${src}（1 アクション 1 コマ）` : "?src=<file under out/> is missing";
+if (src) {
+  const url = `/out/${encodeURI(src)}`;
+  const img = new Image();
+  img.onload = () => {
+    // inspect.ts: 480px-wide tiles, up to 4 per row, 6px padding between tiles (none at the edges).
+    const pad = 6, tw = 480;
+    const cols = Math.round((img.naturalWidth + pad) / (tw + pad));
+    // Rows of the whole sheet (not of the tiles shown): ?rows=, else assume 16:9 tiles (OpenScreen's export).
+    const rows = Number(q.get("rows")) || Math.max(1, Math.round((img.naturalHeight + pad) / ((tw * 9) / 16 + pad)));
+    const th = (img.naturalHeight - pad * (rows - 1)) / rows;
+    const k = 520 / tw;
+    const grid = document.querySelector(".grid");
+    for (let i = 0; i < n; i++) {
+      const t = grid.appendChild(document.createElement("div"));
+      t.className = "t";
+      t.style.height = `${th * k}px`;
+      t.style.backgroundImage = `url("${url}")`;
+      t.style.backgroundSize = `${img.naturalWidth * k}px ${img.naturalHeight * k}px`;
+      t.style.backgroundPosition = `${-(i % cols) * (tw + pad) * k}px ${-Math.floor(i / cols) * (th + pad) * k}px`;
+    }
+  };
+  img.src = url;
+}
+</script>

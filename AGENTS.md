@@ -4,7 +4,9 @@
 
 ## 前提（Codex / Claude Code 共通）
 
-- コマンドはシェルから `bun src/cli.ts <command>` で呼ぶ。この文書が手順の正本で、Claude Code は `CLAUDE.md` 経由で読む。
+- コマンドはシェルから `headless-demo-recorder <command>` で呼ぶ（PATH に無ければ `bun <このリポジトリ>/src/cli.ts <command>`。このリポジトリ内なら `bun src/cli.ts <command>`）。この文書が手順の正本で、Claude Code は `CLAUDE.md` 経由で読む。
+- 別のプロジェクトから使ってよい。シナリオ内のパス（`output.path`、file ソースの `path`、composition の `scenarios[]`）は実行時のカレントディレクトリからの相対で解決され、出力はそのプロジェクトの `out/` などにできる。録画には画面がそのまま入るので、出力先を `.gitignore` に入れるよう利用者に伝える。
+- 入力 JSON の形式は `schema` で確かめる。型定義（`src/types.ts` の全文）、この文書のパス、例のシナリオのパスを1つの JSON で返す。
 - macOS の画面収録とアクセシビリティの権限は、エージェントを動かしているターミナルアプリに付与されている必要がある。付与は利用者が行う。
 - Codex のサンドボックス（`workspace-write`）では、次のコマンドを**最初から**サンドボックス外で実行する許可を求める。サンドボックス内で試さない。
   - `doctor`、`render`、`run`: `openscreen` CLI の実体は Electron アプリで、サンドボックス内で起動するとウィンドウサーバーへの登録を拒否されてクラッシュする（実測）。そのたびに macOS のクラッシュレポートが作られ、利用者の画面にダイアログが出る。
@@ -19,6 +21,7 @@
 | コマンド | リスク | 効果 |
 |---|---|---|
 | `doctor` | R0 | 読み取りのみ。ツール、バージョン、OS権限を確認する |
+| `schema` | R0 | 入力 JSON の型定義、この文書、例のシナリオの場所を返す |
 | `check <scenario>` | R0 | シナリオを検証する。何も起動しない |
 | `plan <project-dir> [--edit e.json]` | R0 | `render` が書き込む編集領域を表示する |
 | `inspect <project-dir> [--video f]` | R0 | アクションごとに1コマ並べたコンタクトシートを作る |
@@ -39,7 +42,7 @@
      - `agent-desktop launch <App>` を実行し、続けて `agent-desktop snapshot --app <ローカライズ名> -i --compact` を実行する。
      - ローカライズ名は `launch` の結果から取る（例: `Calculator` → `計算機`）。
      - 対象は `find` のクエリで指定する（例: `{ "role": "button", "name": "7", "exact": true }`）。
-3. `scenarios/<name>.json` を書く（スキーマは `src/types.ts` の `Scenario`）。字幕には「何をクリックしたか」ではなく「なぜそうするのか」を書く。秘密情報の入力欄には `"redact": true` を付ける。`check` が `ok:true` を返すまで直す。
+3. `scenarios/<name>.json` を書く（形式は `schema` が返す `Scenario`。例は `examples` のファイル）。字幕には「何をクリックしたか」ではなく「なぜそうするのか」を書く。秘密情報の入力欄には `"redact": true` を付ける。`check` が `ok:true` を返すまで直す。
 4. `run scenarios/<name>.json` を実行する。
 5. **`inspectSheet` を開いて目で確認する。** 書き出しに成功しても、動画の中身が正しいとは限らない。各コマについて、次の4点を確かめる。
    - 操作した要素が映っている。
@@ -62,6 +65,18 @@
 - `check` は操作ログの形式も検証する。ログの中身（ラベルや座標）が動画に映っているものと合っているかは検証しないので、手順5の目視確認で確かめる。
 
 書き出した動画は OpenScreen が余白と背景を付けるため、解像度とフレームレートが入力と一致しない（例: 1280x720・30fps の入力から 1784x1080・60fps の出力）。サイズが重要なら `ffprobe` で出力を確かめる。
+
+## 複数の録画を同時に行い、1本に結合する（composition）
+
+既存のシナリオを 1〜2 本参照する構成ファイル（スキーマは `src/types.ts` の `Composition`、例は `scenarios/composition-calc-wiki.json`）を書き、`check` → `run` → `inspect` は単一シナリオと同じ手順で行う。
+
+- 参照先のシナリオは先に単体で `check` を通し、下見を済ませておく。`check <composition>` は参照先の検証も含めて1つの JSON で返す。
+- `--allow-origin` / `--allow-app` は参照先すべてに掛かる。desktop を2本録るなら両方のアプリを列挙する。
+- 参照先は同時に録画を開始し、あとは独立に進む。ステップ単位の待ち合わせ（A の操作を B が待つ）はできない。
+- `inspectSheet` では、各場面の切り替わり（`events.json` の `scene N:` の mark）と、左右それぞれのセルに字幕とカーソルが出ていることを確かめる。
+- 修正は参照先の `events.json` か composition の `scenes` / `edit` を直し、`render <compProj> --composition <file> --force` で結合だけをやり直す。
+- `CAPTURE_PARTIAL_FAILED`（`retry: no`）のときは、アプリの状態を戻してから `run <composition> --force` で全本を撮り直す。別の実行で撮った録画は開始時刻を揃えられない（`runId` が違う）ので、1本だけ撮り直して結合しない。
+- composition の `output.path` は、既存の単一シナリオの project と重ねない。重なると `PROJECT_COLLISION` で止まる。
 
 ## 失敗時の対応: まず `retry` を読む
 

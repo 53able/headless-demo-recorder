@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { compileAnnotations, compileIdleSpeedups, compileZooms, synthesizeCursor } from "./compile.ts";
+import { centerOf, compileAnnotations, compileIdleSpeedups, compileZooms, synthesizeCursor } from "./compile.ts";
+import { validateEvents } from "./validate.ts";
 import type { ActionEvent } from "./types.ts";
 
 const click = (tMs: number, cx: number, cy: number, extra: Partial<ActionEvent> = {}): ActionEvent => ({
@@ -64,4 +65,18 @@ test("unsorted, out-of-range and back-to-back events stay consistent", () => {
   const times = synthesizeCursor(ev, 5000).samples.map((s) => s.timeMs);
   expect([...times].sort((a, b) => a - b)).toEqual(times);
   for (const s of compileIdleSpeedups(ev, 5000, { idleSpeedupMs: 500 })) expect(s.endMs).toBeLessThanOrEqual(5000);
+});
+
+test("centerOf keeps a partly visible element's action point inside the frame", () => {
+  // Top 60% of the element is above the viewport: the point is the middle of the visible 40%.
+  const p = centerOf({ x: 0.4, y: -0.12, w: 0.2, h: 0.2 })!;
+  expect(p.cx).toBeCloseTo(0.5);
+  expect(p.cy).toBeCloseTo(0.04);
+  // Fully inside: the plain center.
+  expect(centerOf({ x: 0.1, y: 0.2, w: 0.2, h: 0.4 })).toEqual({ cx: 0.2, cy: 0.4 });
+  // Wholly outside a desktop window (a separate dialog): no point, so no zoom or cursor.
+  expect(centerOf({ x: 1.05, y: 0.3, w: 0.2, h: 0.1 })).toBeUndefined();
+  // events.json built from it passes the check render runs (an unclamped center would not).
+  expect(validateEvents([{ tMs: 0, kind: "click", point: p }], "e").filter((i) => i.level === "error")).toEqual([]);
+  expect(validateEvents([{ tMs: 0, kind: "click", point: { cx: 0.5, cy: -0.02 } }], "e").some((i) => i.level === "error")).toBe(true);
 });

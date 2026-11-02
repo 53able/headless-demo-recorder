@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { validateEvents, validateScenario } from "./validate.ts";
+import { isComposition, validateComposition, validateEvents, validateScenario } from "./validate.ts";
 
 const base = { name: "demo", source: { type: "browser", url: "https://example.com" }, output: { path: "out/demo.mp4" } };
 const errors = (s: unknown) => validateScenario(s).filter((i) => i.level === "error").map((i) => i.path);
@@ -70,4 +70,54 @@ test("pixel points are errors; off-frame rects and rect-less redaction are warni
     { tMs: 2, kind: "type", redact: true },
   ]);
   expect(issues.map((i) => [i.path, i.level])).toEqual([["events[0].point", "error"], ["events[1].rect", "warning"], ["events[2].redact", "warning"]]);
+});
+
+const comp = {
+  name: "calc-wiki",
+  scenarios: ["scenarios/calc.json", "scenarios/wiki.json"],
+  scenes: [{ layout: "side-by-side", streams: [{ scenario: "calc" }, { scenario: "wiki", startMs: 0, endMs: 5000 }] }, { layout: "single", streams: [{ scenario: "wiki" }] }],
+  size: [1920, 1080],
+  edit: { zoom: { depth: 2 }, stepCaptions: true, titles: [{ text: "t", startMs: 0, endMs: 1000 }] },
+  output: { path: "out/calc-wiki.mp4" },
+};
+const names = ["calc", "wiki"];
+const compErrors = (c: unknown, n: (string | undefined)[] = names) => validateComposition(c, n).filter((i) => i.level === "error").map((i) => i.path);
+
+test("isComposition looks for a scenes array", () => {
+  expect(isComposition(comp)).toBe(true);
+  expect(isComposition(base)).toBe(false);
+  expect(isComposition(null)).toBe(false);
+});
+
+test("a valid composition has no issues", () => {
+  expect(validateComposition(comp, names)).toEqual([]);
+});
+
+test("composition name, output and scenario list", () => {
+  expect(compErrors({ ...comp, name: "a b", output: { path: "out/x.mov" } })).toEqual(["name", "output.path"]);
+  expect(compErrors({ ...comp, scenarios: [] }, [])).toContain("scenarios");
+  expect(compErrors({ ...comp, scenarios: ["a.json", "b.json", "c.json"] }, ["calc", "wiki", "x"])).toEqual(["scenarios"]);
+  expect(compErrors({ ...comp, scenarios: ["a.json", "a.json"] }, ["calc", "wiki"])).toEqual(["scenarios[1]"]);
+  expect(compErrors(comp, ["calc", "calc"])).toEqual(["scenarios[1]", "scenes[0].streams[1].scenario", "scenes[1].streams[0].scenario"]);
+  expect(compErrors(comp, ["calc", undefined])).toEqual(["scenarios[1]", "scenes[0].streams[1].scenario", "scenes[1].streams[0].scenario"]);
+});
+
+test("scenes: layout, stream count, scenario names and time ranges", () => {
+  const scenes = (s: unknown[]) => compErrors({ ...comp, scenes: s });
+  expect(scenes([])).toEqual(["scenes"]);
+  expect(scenes([{ layout: "grid", streams: [] }])).toEqual(["scenes[0].layout"]);
+  expect(scenes([{ layout: "single", streams: [{ scenario: "calc" }, { scenario: "wiki" }] }])).toEqual(["scenes[0].streams"]);
+  expect(scenes([{ layout: "side-by-side", streams: [{ scenario: "calc" }] }])).toEqual(["scenes[0].streams"]);
+  expect(scenes([{ layout: "side-by-side", streams: [{ scenario: "calc" }, { scenario: "nope" }] }])).toEqual(["scenes[0].streams[1].scenario"]);
+  expect(scenes([{ layout: "single", streams: [{ scenario: "calc", startMs: -1, endMs: "5" }] }])).toEqual(["scenes[0].streams[0].startMs", "scenes[0].streams[0].endMs"]);
+  expect(scenes([{ layout: "single", streams: [{ scenario: "calc", startMs: 5000, endMs: 5000 }] }])).toEqual(["scenes[0].streams[0]"]);
+});
+
+test("size must be even-friendly integers", () => {
+  expect(compErrors({ ...comp, size: [1280, 720] })).toEqual([]);
+  for (const size of [[1922, 1080], [1920, 1081], [1920.5, 1080], [1920], "1920x1080", [0, 1080]]) expect(compErrors({ ...comp, size })).toEqual(["size"]);
+});
+
+test("edit keys that break time mapping are rejected", () => {
+  for (const k of ["trim", "idleSpeedupMs", "idleSpeed", "speechCaptions", "redact"]) expect(compErrors({ ...comp, edit: { ...comp.edit, [k]: [] } })).toEqual([`edit.${k}`]);
 });

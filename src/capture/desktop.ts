@@ -1,17 +1,51 @@
 import { spawn } from "node:child_process";
-import { copyFile } from "node:fs/promises";
-import { join } from "node:path";
+import { copyFile, lstat, rename, rm } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import { bundleRefusal, parseBundleId } from "../appguard.ts";
-import { abortSignal, ffprobe, log, parseNdjson, run, runOk, sleep, toMp4 } from "../exec.ts";
+import { abortSignal, exists, ffprobe, log, parseNdjson, run, runOk, sleep, spawnEnv, toMp4 } from "../exec.ts";
+import { centerOf } from "../compile.ts";
 import type { ActionEvent, CaptureResult, DesktopSource, DesktopTarget, NRect, Step } from "../types.ts";
 
 type Env<T> = { ok: boolean; data: T; error?: { code: string; message: string; disposition?: { retry?: string } } };
 type Bounds = { x: number; y: number; width: number; height: number };
 type Win = { id: string; app_name: string; title: string; bounds: Bounds; visible: boolean; pid?: number };
 
+const move = (from: string, to: string) =>
+  rename(from, to).catch(async (e: NodeJS.ErrnoException) => {
+    if (e.code !== "EXDEV") throw e;
+    // Across volumes: a half-written copy must not be mistaken for the recording.
+    await copyFile(from, to).catch(async (err) => {
+      await rm(to, { force: true });
+      throw err;
+    });
+    await rm(from);
+  });
+
+/** `openscreen record` always writes into the app's recordings folder (video, cursor telemetry,
+ * session file). Move those into `workDir` as `desktop-raw.*` so nothing accumulates there.
+ * The app's media-links registry is left alone: it is the app's file. */
+async function adoptRecording(stdout: string, workDir: string): Promise<void> {
+  const done = parseNdjson(stdout).find((e) => e.event === "done" && e.success === true) as { screenVideoPath?: string } | undefined;
+  const video = done?.screenVideoPath;
+  if (!video) return log("openscreen record reported no file (stopped by force?); a partial recording may remain in its recordings folder");
+  // Only the recorder's own files: an absolute .mp4 and the two names derived from it, regular files only.
+  if (!isAbsolute(video) || !video.endsWith(".mp4")) throw new Error(`unexpected recording path ${video}`);
+  const files: [string, string][] = [
+    [video, "desktop-raw.mp4"],
+    [`${video}.cursor.json`, "desktop-raw.mp4.cursor.json"],
+    [`${video.slice(0, -".mp4".length)}.session.json`, "desktop-raw.session.json"],
+  ];
+  for (const [from, name] of files) {
+    if (!(await lstat(from).catch(() => undefined))?.isFile()) continue;
+    await move(from, join(workDir, name)).catch((e: Error) => log(`could not move ${from}: ${e.message}`));
+  }
+}
+
 export type DesktopOptions = {
   /** Bundle IDs input may be sent to (`--allow-app`). Deny-listed apps are refused regardless. */
   allowApps?: string[];
+  /** Awaited once the recorder runs; video before the moment it resolves is trimmed (see `t0EpochMs`). */
+  ready?: () => Promise<void>;
 };
 
 async function ad<T>(...args: string[]): Promise<T> {
@@ -51,7 +85,7 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
 
   const projectPath = join(workDir, "desktop.openscreen");
   const args = ["record", "--window", title, "--project", projectPath, "--json", ...(src.systemAudio ? ["--system-audio"] : [])];
-  const rec = spawn("openscreen", args, { stdio: ["pipe", "pipe", "pipe"] });
+  const rec = spawn("openscreen", args, { stdio: ["pipe", "pipe", "pipe"], env: spawnEnv() });
   let stdout = "";
   let t0 = 0;
   rec.stdin.on("error", () => undefined); // EPIPE if the child exits before "stop" is written
@@ -107,7 +141,14 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
     await shutdown(false);
     throw e;
   }
+  let headMs = 0;
   try {
+    const recordingStartedAt = t0;
+    if (opts.ready) {
+      await opts.ready();
+      t0 = Date.now();
+    }
+    headMs = t0 - recordingStartedAt;
     await sleep(500);
     for (const step of steps) {
       const caption = "caption" in step ? step.caption : undefined;
@@ -119,7 +160,7 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
           const rect = b ? norm(b.value) : undefined;
           events.push({
             tMs: now(), kind: step.action === "click" ? "click" : "type", label: JSON.stringify(step.target), caption, rect,
-            point: rect && { cx: rect.x + rect.w / 2, cy: rect.y + rect.h / 2 }, zoom: step.zoom, redact: step.redact,
+            point: rect && centerOf(rect), zoom: step.zoom, redact: step.redact,
           });
           await guard();
           if (step.action === "click") await ad("click", ref);
@@ -147,17 +188,18 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
   } finally {
     // Also runs when a step throws, so the recorder never outlives the work dir.
     await shutdown(true);
+    // Success or not: move the recording out of OpenScreen's folder into the work dir, which
+    // `--keep-work` (or a failed capture) keeps and a normal run removes.
+    await adoptRecording(stdout, workDir).catch((e: Error) => log(`could not move the OpenScreen recording: ${e.message}`));
   }
   const code = await finished;
   const done = parseNdjson(stdout).find((e) => e.event === "done" && e.success === true) as { screenVideoPath?: string } | undefined;
   if (code !== 0 || !done?.screenVideoPath) throw new Error(`openscreen record failed (exit ${code}): ${stdout.slice(-1500)}`);
-
-  // Copy into the work dir so the project and its media live together.
   const raw = join(workDir, "desktop-raw.mp4");
-  await copyFile(done.screenVideoPath, raw);
+  if (!(await exists(raw))) throw new Error(`openscreen record reported ${done.screenVideoPath} but it could not be moved into ${workDir}`);
   const mp4 = join(workDir, "capture.mp4");
-  await toMp4(raw, mp4);
+  await toMp4(raw, mp4, { startMs: headMs });
   const probe = await ffprobe(mp4);
   log(`desktop capture: window "${title}" ${probe.width}x${probe.height}, ${probe.durationMs}ms`);
-  return { videoPath: mp4, width: probe.width, height: probe.height, durationMs: probe.durationMs, events, realCursor: false };
+  return { videoPath: mp4, width: probe.width, height: probe.height, durationMs: probe.durationMs, events, realCursor: false, t0EpochMs: t0 };
 }

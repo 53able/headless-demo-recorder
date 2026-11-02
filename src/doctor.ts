@@ -9,6 +9,19 @@ async function which(cmd: string): Promise<string | null> {
   return r && r.code === 0 ? r.stdout.trim() : null;
 }
 
+/** True when the first x.y.z in `text` is at least `min`. False when no version is found. */
+export function atLeast(text: string, min: string): boolean {
+  const m = text.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return false;
+  const a = m.slice(1).map(Number);
+  const b = min.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if (a[i]! !== b[i]!) return a[i]! > b[i]!;
+  return true;
+}
+
+// Versions this tool is tested against (README: 必要環境).
+const MIN = { "agent-browser": "0.41.0", "agent-desktop": "1.0.2" };
+
 export async function doctor(): Promise<Check[]> {
   const checks: Check[] = [];
   const add = (c: Check) => checks.push(c);
@@ -26,11 +39,14 @@ export async function doctor(): Promise<Check[]> {
 
   if (checks.find((c) => c.name === "agent-browser")?.ok) {
     const r = await run("agent-browser", ["--version"]);
-    add({ name: "agent-browser version", ok: r.code === 0, detail: r.stdout.trim() });
+    const ok = r.code === 0 && atLeast(r.stdout, MIN["agent-browser"]);
+    add({ name: "agent-browser version", ok, detail: r.stdout.trim(), fix: ok ? undefined : `npm i -g agent-browser@latest (needs ${MIN["agent-browser"]}+)` });
   }
   if (checks.find((c) => c.name === "agent-desktop")?.ok) {
     const v = await run("agent-desktop", ["version"]);
-    add({ name: "agent-desktop version", ok: v.code === 0, detail: v.stdout.match(/"version":"([^"]+)"/)?.[1] ?? v.stdout.trim() });
+    const detail = v.stdout.match(/"version":"([^"]+)"/)?.[1] ?? v.stdout.trim();
+    const ok = v.code === 0 && atLeast(detail, MIN["agent-desktop"]);
+    add({ name: "agent-desktop version", ok, detail, fix: ok ? undefined : `npm i -g agent-desktop@latest (needs ${MIN["agent-desktop"]}+)` });
     const p = await run("agent-desktop", ["permissions"]);
     try {
       const d = JSON.parse(p.stdout).data as Record<string, { state: string }>;

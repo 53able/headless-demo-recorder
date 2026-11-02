@@ -1,5 +1,7 @@
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { childEnv, ffprobe, log, run, runOk, sleep, toMp4 } from "../exec.ts";
+import { centerOf } from "../compile.ts";
 import type { ActionEvent, BrowserSource, CaptureResult, NRect, Step } from "../types.ts";
 import { allowedDomains } from "../validate.ts";
 
@@ -8,6 +10,8 @@ export type BrowserOptions = {
   allowOrigins?: string[];
   /** agent-browser session name chosen by the caller, so it can close the session itself. */
   sessionName?: string;
+  /** Awaited after recording starts, before any scenario steps. */
+  ready?: () => Promise<void>;
 };
 
 type Box = { x: number; y: number; width: number; height: number };
@@ -18,7 +22,10 @@ export async function captureBrowser(src: BrowserSource, steps: Step[], workDir:
   const session = opts.sessionName ?? `headless-demo-recorder-${process.pid}-${Date.now()}`;
   if (!opts.allowOrigins?.length) log("warning: no --allow-origin given; the browser may reach any host");
   // Every invocation carries the same restriction, including record stop/close.
-  const base = ["--session", session, ...(opts.allowOrigins?.length ? ["--allowed-domains", allowedDomains(opts.allowOrigins)] : [])];
+  // ponytail: works around an agent-browser bug (see ws-constants.js); drop once fixed upstream.
+  const base = ["--session", session, ...(opts.allowOrigins?.length
+    ? ["--allowed-domains", allowedDomains(opts.allowOrigins), "--init-script", fileURLToPath(new URL("./ws-constants.js", import.meta.url))]
+    : [])];
   const env = childEnv();
   const ab = (...args: string[]) => runOk("agent-browser", [...base, ...(src.headed ? ["--headed"] : []), ...args], { timeoutMs: 60_000, env });
   const abJson = async <T>(...args: string[]): Promise<T> => {
@@ -54,6 +61,7 @@ export async function captureBrowser(src: BrowserSource, steps: Step[], workDir:
     await ab("wait", "--load", "networkidle").catch(() => undefined);
     await ab("record", "start", webm, src.url);
     t0 = Date.now();
+    await opts.ready?.();
     await ab("wait", "--load", "networkidle").catch(() => undefined);
     await sleep(600);
 
@@ -66,7 +74,7 @@ export async function captureBrowser(src: BrowserSource, steps: Step[], workDir:
           const rect = await boxOf(step.target);
           const ev: ActionEvent = {
             tMs: now(), kind: step.action === "click" ? "click" : "type", label: step.target, caption, rect,
-            point: rect && { cx: rect.x + rect.w / 2, cy: rect.y + rect.h / 2 }, zoom: step.zoom, redact: step.redact,
+            point: rect && centerOf(rect), zoom: step.zoom, redact: step.redact,
           };
           events.push(ev);
           if (step.action === "click") await ab("click", step.target);
@@ -111,5 +119,5 @@ export async function captureBrowser(src: BrowserSource, steps: Step[], workDir:
   const scale = wallMs > 0 ? probe.durationMs / wallMs : 1;
   for (const e of events) e.tMs = Math.max(0, Math.round(e.tMs * scale));
   log(`browser capture: ${probe.width}x${probe.height}, ${probe.durationMs}ms video / ${wallMs}ms wall (scale ${scale.toFixed(3)})`);
-  return { videoPath: mp4, width: probe.width, height: probe.height, durationMs: probe.durationMs, events, realCursor: false };
+  return { videoPath: mp4, width: probe.width, height: probe.height, durationMs: probe.durationMs, events, realCursor: false, t0EpochMs: t0 };
 }
