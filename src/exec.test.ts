@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
-import { childEnv, run } from "./exec.ts";
+import { childEnv, run, spawnEnv } from "./exec.ts";
 
 test("run never passes ELECTRON_RUN_AS_NODE to a child", async () => {
   process.env.ELECTRON_RUN_AS_NODE = "1";
   try {
+    expect(spawnEnv().ELECTRON_RUN_AS_NODE).toBeUndefined(); // used by desktop.ts's direct spawn
     for (const env of [undefined, { ...process.env } as Record<string, string>]) {
       const r = await run("/usr/bin/env", [], { env });
       expect(r.stdout).not.toContain("ELECTRON_RUN_AS_NODE");

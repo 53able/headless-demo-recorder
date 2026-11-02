@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { bundleRefusal, parseBundleId } from "../appguard.ts";
-import { abortSignal, ffprobe, log, parseNdjson, run, runOk, sleep, toMp4 } from "../exec.ts";
+import { abortSignal, ffprobe, log, parseNdjson, run, runOk, sleep, spawnEnv, toMp4 } from "../exec.ts";
 import type { ActionEvent, CaptureResult, DesktopSource, DesktopTarget, NRect, Step } from "../types.ts";
 
 type Env<T> = { ok: boolean; data: T; error?: { code: string; message: string; disposition?: { retry?: string } } };
@@ -51,7 +51,7 @@ export async function captureDesktop(src: DesktopSource, steps: Step[], workDir:
 
   const projectPath = join(workDir, "desktop.openscreen");
   const args = ["record", "--window", title, "--project", projectPath, "--json", ...(src.systemAudio ? ["--system-audio"] : [])];
-  const rec = spawn("openscreen", args, { stdio: ["pipe", "pipe", "pipe"] });
+  const rec = spawn("openscreen", args, { stdio: ["pipe", "pipe", "pipe"], env: spawnEnv() });
   let stdout = "";
   let t0 = 0;
   rec.stdin.on("error", () => undefined); // EPIPE if the child exits before "stop" is written

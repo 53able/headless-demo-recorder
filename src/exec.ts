@@ -24,16 +24,20 @@ export function childEnv(): Record<string, string> {
   return env;
 }
 
+/** Environment for every child process. Electron-based hosts (e.g. T3 Code) export
+ * ELECTRON_RUN_AS_NODE=1, which makes the Electron `openscreen` binary start as plain Node. */
+export function spawnEnv(env: Record<string, string | undefined> = process.env): Record<string, string | undefined> {
+  const { ELECTRON_RUN_AS_NODE: _, ...rest } = env;
+  return rest;
+}
+
 type RunOpts = { input?: string; timeoutMs?: number; env?: Record<string, string>; cleanup?: boolean };
 
 /** Run a command to completion. Never goes through a shell. */
 export function run(cmd: string, args: string[], opts: RunOpts = {}): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     if (!opts.cleanup && abortSignal.aborted) return reject(abortSignal.reason);
-    // Electron-based hosts (e.g. T3 Code) export ELECTRON_RUN_AS_NODE=1, which makes the
-    // Electron `openscreen` binary start as plain Node and fail on every subcommand.
-    const { ELECTRON_RUN_AS_NODE: _, ...env } = opts.env ?? process.env;
-    const p = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env });
+    const p = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env: spawnEnv(opts.env) });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
