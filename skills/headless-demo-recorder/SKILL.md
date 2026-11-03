@@ -13,7 +13,7 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
 - base directory が示されなければ、次の順に `scripts/cli.ts` があるディレクトリを `<skill-dir>` とする。プロジェクトへの導入（`npx skills add`）では `.claude/skills/headless-demo-recorder`、`.agents/skills/headless-demo-recorder`。ユーザー全体への導入（`npx skills add -g`）では `~/.claude/skills/headless-demo-recorder`、`~/.agents/skills/headless-demo-recorder`。
 - どこにも無い、または `bun` が無い場合は止めて、利用者に導入を案内する（`npx skills add 53able/headless-demo-recorder -g -a claude-code -a codex`、bun は別途導入）。コマンドやフラグが `unknown command` になるなど、スキルが古いと思われる場合は `npx skills update headless-demo-recorder` を案内する。スキルの導入と更新は利用者が行う。
 - シナリオと出力は、いま作業しているプロジェクトに置く（例: `scenarios/<name>.json`、`out/<name>.mp4`）。シナリオ内のパス（`output.path`、file ソースの `path`、composition の `scenarios[]`）は実行時のカレントディレクトリからの相対で解決される。録画には画面がそのまま入るので、出力先が `.gitignore` に入っていなければ利用者に伝える。
-- 入力 JSON の形式は `<skill-dir>/scripts/types.ts`、例のシナリオは `<skill-dir>/assets/*.json` にある。`schema` を実行すると、型定義の全文、この文書のパス（`guide`）、例のパス（`examples`）を1つの JSON で返す。返るパスは symlink を解決した実体のパスであり、`<skill-dir>` の表記と一致しないことがある。
+- 入力 JSON の形式は `<skill-dir>/scripts/types.ts`、例のシナリオは `<skill-dir>/assets/*.json` にある。`schema` を実行すると、型定義の全文、この文書のパス（`guide`）、依頼に応じて読む手順書のパス（`references`）、例のパス（`examples`）を1つの JSON で返す。返るパスは symlink を解決した実体のパスであり、`<skill-dir>` の表記と一致しないことがある。
 - 同梱の example は、このスキルの開発リポジトリのルートを cwd にした雛形。導入先ではそのまま `check` / `run` せず、作業中のプロジェクトに写して書き換える（特に composition の `scenarios[]` のパスと、desktop の `target` の `name`。ボタン名などはアプリの表示言語で変わるので、下見で得た名前に置き換える）。
 - `scripts/` の `*.test.ts` はスキルの開発用で、使うときは実行しない。導入先（`.agents/skills/` などドットで始まるディレクトリ）は、利用者のプロジェクトの `bun test` の探索対象に入らない。
 - macOS の画面収録とアクセシビリティの権限は、エージェントを動かしているターミナルアプリに付与されている必要がある。付与は利用者が行う。
@@ -26,18 +26,20 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
 | コマンド | リスク | 効果 |
 |---|---|---|
 | `doctor` | R0 | 読み取りのみ。ツール、バージョン、OS権限を確認する |
-| `schema` | R0 | 入力 JSON の型定義、この文書、例のシナリオの場所を返す |
+| `schema` | R0 | 入力 JSON の型定義、この文書、`references/` の手順書、例のシナリオの場所を返す |
 | `check <scenario>` | R0 | シナリオを検証する。何も起動しない |
-| `plan <project-dir> [--edit e.json]` | R0 | `render` が書き込む編集領域を表示する |
-| `inspect <project-dir> [--video f]` | R0 | アクションごとに1コマ並べたコンタクトシートを作る |
-| `render <project-dir> [--scenario s \| --edit e] [--out f]` | R1 | プロジェクトと出力ファイルを再生成する。既存の出力は `--force` がない限り上書きしない |
+| `plan <project-dir> [--scenario s] [--edit e]` | R0 | `render` が書き込む編集領域を表示する |
+| `inspect <project-dir> [--video f]` | R0 | アクションごとに1コマ並べたコンタクトシートを作る。`--video` を省くと元の録画（`capture.mp4`）を使い、字幕もマーカーも映らない |
+| `render <project-dir> [--scenario s] [--edit e] [--out f]` | R1 | プロジェクトと出力ファイルを再生成する。`--edit` を渡すと `--scenario` の `edit` の代わりにそれを使う。既存の出力は `--force` がない限り上書きしない |
 | `capture <scenario>` | R2 | アプリまたはページを起動・操作し、録画する |
 | `run <scenario>` | R2 | check → capture → render → inspect を順に実行する |
-| `session start <scenario> [--group g] [--idle-timeout 秒]` | R2 | 録画を開始して開いたままにする（browser / desktop）。シナリオの `steps` があれば先に実行する |
+| `session start <scenario> [--group g] [--idle-timeout 秒] [--allow-origin o] [--allow-app id]` | R2 | 録画を開始して開いたままにする（browser / desktop）。シナリオの `steps` があれば先に実行する |
 | `session observe <project-dir> [--screenshot]` | R0 | 録画中の画面のアクセシビリティスナップショット（`act` で使える参照付き）を返す。`--screenshot` で PNG も保存する |
 | `session act <project-dir> '<step JSON>'` | R2 | 1手だけ実行する。シナリオの手と同じ検証（不可逆な操作、`--allow-origin`）を通る |
-| `session status <project-dir>` | R0 | 録画中・停止済み・失敗、経過時間、記録した操作数を返す |
+| `session status <project-dir>` | R0 | 状態（`recording` / `stopping` / `stopped` / `failed`。録画プロセスが落ちていれば `recorder exited`）、経過時間、記録した操作数を返す |
 | `session stop <project-dir>` | R1 | 録画を止め、通常のプロジェクト（`capture.mp4`、`events.json`）として保存する |
+
+共通のフラグ: `--force`（既存の録画・出力を上書きする）、`--keep-work`（録画の中間ファイルを残す）、`--session-name <name>`（使う agent-browser のセッション名。composition では `<name>-<シナリオ名>`）。
 
 ## 作業ループ
 
@@ -62,6 +64,7 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
    - 操作した要素にマーカーが重なっている。
    - 字幕が読める。
    - 個人情報が映っていない。
+   - `inspect` の `timelineEdited` が `true` なら、書き出しにトリムか早送りがある。コマの時刻は、`render` が `render.json` に残した区間を通して書き出しの時刻に換算してある。`note` が「approximate」を含むときは、`render` をやり直してから `inspect` する。
 6. 修正は再録画せずに行う。`events.json`（タイミング、字幕、座標）またはシナリオの `edit` を直し、`render <project-dir> --scenario <file> --force` で再生成してから、もう一度 `inspect` する。
 
 ## 操作の種類
@@ -83,7 +86,7 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
 ## マーカーとカーソル
 
 - 既定では合成カーソルは描かない。操作した要素に約 1.2 秒、黄色のリングを動画へ焼き込む（`render` が `capture.marked.mp4` を作る）。動画ごとズームされるので、リングは要素に重なったまま動く。対象は `point` を持つ `click` / `type` で、`fill` は `type`、`select` は `click` として記録される。
-- マーカーを付けないもの: `press` / `scroll` / `mark`、`redact: true` のクリック、`point` の無いイベント、画面の 1/4 を超える面積の要素。
+- マーカーを付けないもの: `press` / `scroll` / `mark`、`redact: true` のイベント（クリックも入力も）、`point` の無いイベント、画面の 1/4 を超える面積の要素。
 - step の `zoom: false` はマーカーを止めない。マーカーを止めるのは `edit.marker: false`。
 - `edit.syntheticCursor: true` を明示したときだけ、従来どおり合成カーソルを描く。クリックの瞬間が実際の UI の反応と数百 ms ずれることがある。
 - composition では、マーカーの有無は各録画の `{...scenario.edit, ...composition.edit}` で決まる。カーソルは `composition.edit.syntheticCursor` だけで決まる。

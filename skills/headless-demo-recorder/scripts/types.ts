@@ -40,6 +40,8 @@ export type BrowserSource = {
 };
 export type DesktopSource = {
   type: "desktop";
+  /** With `launch: true`, the app to launch (e.g. "Calculator"); its window is then found by the localized
+   * process name `launch` reports (e.g. "計算機"). Without it, the localized name exactly as it appears. */
   app: string;
   /** Window title substring passed to `openscreen record --window`. Defaults to app. */
   window?: string;
