@@ -64,6 +64,8 @@ export type Target = string | DesktopTarget;
  * confirmed is harmless (e.g. a calculator's "すべて消去"). Narrower than scenario.allowDestructive. */
 export type StepAck = { allowDestructive?: boolean };
 
+/** caption: why the step is taken, not what is clicked; over 40 chars `check` warns it may wrap.
+ * Inside a `session`, `wait.ms` and `waitMs` are at most 60000. */
 export type Step = StepAck & (
   | { action: "click"; target: Target; caption?: string; zoom?: boolean; redact?: boolean; waitMs?: number }
   | { action: "fill"; target: Target; value: string; caption?: string; zoom?: boolean; redact?: boolean; waitMs?: number }
@@ -104,6 +106,7 @@ export type EditPlan = {
 };
 
 export type Output = {
+  /** Ends with .mp4 or .gif; relative to the current directory. */
   path: string;
   quality?: "medium" | "good" | "source";
   gifFps?: 15 | 20 | 25 | 30;
@@ -113,6 +116,7 @@ export type Output = {
 };
 
 export type Scenario = {
+  /** [A-Za-z0-9_.-]+; unique among the scenarios of a composition. */
   name: string;
   /** Required to run steps that look irreversible (delete, send, purchase, ...). Confirm with the user first. */
   allowDestructive?: boolean;
@@ -132,9 +136,10 @@ export type SceneStream = { scenario: string; startMs?: number; endMs?: number }
 export type Scene = { layout: "single" | "side-by-side"; streams: SceneStream[] };
 export type Composition = {
   name: string;
-  /** Scenario JSON paths, relative to the current directory. */
+  /** 1 or 2 scenario JSON paths, relative to the current directory. */
   scenarios: string[];
   scenes: Scene[];
+  /** [width, height]; width a multiple of 4, height a multiple of 2. */
   size?: [number, number];
   edit?: CompositionEdit;
   output: Output;
