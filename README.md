@@ -61,6 +61,12 @@ npx skills add 53able/headless-demo-recorder -g -a claude-code -a codex
 - 既定では1か所に実体を置き、各エージェントの場所からシンボリックリンクを張る。リンクを使えない環境では `--copy` を付ける。
 - プロジェクトに入れると、`.agents/skills/`、`.claude/skills/` と `skills-lock.json` がプロジェクトに作られる。これらをコミットすれば、チームで同じ版を使える。
 - 更新は `npx skills check`（更新の有無）と `npx skills update headless-demo-recorder`、削除は `npx skills remove headless-demo-recorder`（いずれも `-g` で導入したなら `-g` を付ける）。
+- 上の導入は `main` の最新を追う。更新の有無はスキルフォルダの中身で判定され、バージョン番号は見ない。
+- 版を固定するなら、タグを URL で指定する。固定した導入は `skills update` でもそのタグに留まり、別の版へは同じコマンドでタグを替えて入れ直す。版の一覧は [タグ](https://github.com/53able/headless-demo-recorder/tags)（v0.2.0 以降）。
+
+  ```bash
+  npx skills add https://github.com/53able/headless-demo-recorder/tree/v0.3.0/skills/headless-demo-recorder -g -a claude-code -a codex
+  ```
 - CLI は実行時の依存パッケージを持たず、導入先の `scripts/cli.ts` を bun でそのまま実行する。`bun install` は要らない。
 
 導入できたかは、導入先の CLI で確かめる。
