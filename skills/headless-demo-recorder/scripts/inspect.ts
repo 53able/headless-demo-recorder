@@ -24,28 +24,41 @@ export function exportTimeMs(tMs: number, r: Regions): number {
   return cuts.slice(1).reduce((out, t, i) => out + (t - cuts[i]!) * rate(cuts[i]!), 0);
 }
 
-/** The render record of the export at `videoPath`; undefined for the raw capture or a video this
- * project's latest successful render did not produce. `timeline` is missing in records from older versions. */
-async function exportRecord(projDir: string, videoPath: string): Promise<Partial<RenderRecord> & Pick<RenderRecord, "timelineEdited"> | undefined> {
-  if (resolve(videoPath) === resolve(projDir, "capture.mp4")) return undefined;
-  const rec = await readFile(join(projDir, RENDER_RECORD), "utf8").then((t) => JSON.parse(t) as RenderRecord, () => undefined);
-  return rec && resolve(rec.outputPath) === resolve(videoPath) ? rec : undefined;
+/** Frame time in the export for each action (ms). The frame is taken ~350ms after the action, on the
+ * capture timeline, so the UI's reaction is in view. With the export's regions it maps through them;
+ * the residual ratio then absorbs only small length differences (frame rounding). Without regions the
+ * whole timeline is scaled by one ratio. `ratio` is returned for the note in `inspect`. */
+export function frameTimes(actionsMs: number[], captureMs: number, exportMs: number, regions?: Regions): { tMs: number[]; ratio: number } {
+  const toExport = (t: number) => (regions ? exportTimeMs(t, regions) : t);
+  const expected = toExport(captureMs);
+  const ratio = expected > 0 ? exportMs / expected : 1;
+  return { tMs: actionsMs.map((t) => Math.round(Math.min(toExport(t + 350) * ratio, exportMs - 50))), ratio };
+}
+
+/** Whether the video at `videoPath` has an edited timeline, and the regions to map frames through.
+ * `edited`: false for the raw capture; the render record's value when this project's latest successful
+ * render produced the video; null when unknown (no record, an unreadable one, or another video).
+ * `regions` is set only when the record says edited and carries `timeline` (older records do not). */
+export async function exportTimeline(projDir: string, videoPath: string): Promise<{ edited: boolean | null; regions?: Regions }> {
+  if (resolve(videoPath) === resolve(projDir, "capture.mp4")) return { edited: false };
+  let rec: Partial<RenderRecord> | undefined;
+  try {
+    rec = JSON.parse(await readFile(join(projDir, RENDER_RECORD), "utf8")) as Partial<RenderRecord>;
+  } catch {
+    return { edited: null };
+  }
+  if (!rec?.outputPath || resolve(rec.outputPath) !== resolve(videoPath) || typeof rec.timelineEdited !== "boolean") return { edited: null };
+  return rec.timelineEdited && rec.timeline ? { edited: true, regions: rec.timeline } : { edited: rec.timelineEdited };
 }
 
 export async function inspect(projDir: string, videoPath: string): Promise<InspectResult> {
   const events = JSON.parse(await readFile(join(projDir, "events.json"), "utf8")) as ActionEvent[];
   const probe = await ffprobe(videoPath);
   const capture = JSON.parse(await readFile(join(projDir, "capture.json"), "utf8")) as { durationMs: number };
-  const exp = await exportRecord(projDir, videoPath);
-  // Map through the export's trim/speed regions when known; the remaining ratio absorbs small
-  // length differences (frame rounding). Otherwise the whole timeline is scaled by one ratio.
-  const regions: Regions | undefined = exp?.timelineEdited ? exp.timeline : undefined;
-  const toExport = (t: number) => (regions ? exportTimeMs(t, regions) : t);
-  const expected = toExport(capture.durationMs);
-  const ratio = expected > 0 ? probe.durationMs / expected : 1;
+  const { edited, regions } = await exportTimeline(projDir, videoPath);
   const picks = events.length ? events : [{ tMs: 0, kind: "mark" } as ActionEvent];
-  // ~350ms after the action, on the capture timeline, so the UI's reaction is in frame.
-  const frames = picks.map((e, index) => ({ index, tMs: Math.round(Math.min(toExport(e.tMs + 350) * ratio, probe.durationMs - 50)), kind: e.kind, caption: e.caption, label: e.label }));
+  const { tMs: times, ratio } = frameTimes(picks.map((e) => e.tMs), capture.durationMs, probe.durationMs, regions);
+  const frames = picks.map((e, index) => ({ index, tMs: times[index]!, kind: e.kind, caption: e.caption, label: e.label }));
 
   const tmp: string[] = [];
   for (const f of frames) {
@@ -58,7 +71,6 @@ export async function inspect(projDir: string, videoPath: string): Promise<Inspe
   const sheet = join(projDir, "inspect-sheet.png");
   await runOk("ffmpeg", ["-v", "error", "-y", "-i", join(projDir, ".inspect-%d.png"), "-vf", `tile=${cols}x${rows}:padding=6:color=white`, "-frames:v", "1", sheet]);
   await Promise.all(tmp.map((p) => rm(p, { force: true })));
-  const edited = resolve(videoPath) === resolve(projDir, "capture.mp4") ? false : exp ? exp.timelineEdited : null;
   return {
     sheet,
     frames,
