@@ -1,6 +1,7 @@
-// Turns an action log into OpenScreen editor regions and a synthetic cursor track.
+// Turns an action log into OpenScreen editor regions (zooms, captions) and marker spans and an optional synthetic cursor track.
 // Pure functions: no I/O, unit-tested in compile.test.ts.
 
+import { deflateSync } from "node:zlib";
 import type { ActionEvent, CaptureResult, EditPlan, NPoint, NRect } from "./types.ts";
 
 export type ZoomRegion = { id: string; startMs: number; endMs: number; depth: number; focus: NPoint; focusMode: "manual"; source: "manual" };
@@ -11,6 +12,8 @@ export type SpeedRegion = SpanRegion & { speed: number };
 export type EditorPatch = {
   zoomRegions: ZoomRegion[];
   annotationRegions: AnnotationRegion[];
+  /** Rings burned into the video by `render` (OpenScreen annotations do not follow zooms). */
+  markers: Marker[];
   trimRegions: SpanRegion[];
   speedRegions: SpeedRegion[];
   autoZoomEnabled: false;
@@ -19,14 +22,20 @@ export type EditorPatch = {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-/** The action point of an element: the center of its visible part. Undefined when nothing of it
- * is in the frame (e.g. a dialog outside a desktop window): no zoom or cursor should point there.
- * The raw center of a partly visible element is off-frame, which events.json validation rejects. */
-export function centerOf(r: NRect): NPoint | undefined {
+/** The part of an element that is inside the frame. Undefined when nothing of it is visible. */
+export function visibleRect(r: NRect): NRect | undefined {
   const x0 = clamp(r.x, 0, 1), x1 = clamp(r.x + r.w, 0, 1);
   const y0 = clamp(r.y, 0, 1), y1 = clamp(r.y + r.h, 0, 1);
   if (x1 <= x0 || y1 <= y0) return undefined;
-  return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/** The action point of an element: the center of its visible part. Undefined when nothing of it
+ * is in the frame (e.g. a dialog outside a desktop window): no zoom or marker should point there.
+ * The raw center of a partly visible element is off-frame, which events.json validation rejects. */
+export function centerOf(r: NRect): NPoint | undefined {
+  const v = visibleRect(r);
+  return v && { cx: v.x + v.w / 2, cy: v.y + v.h / 2 };
 }
 const dist = (a: NPoint, b: NPoint) => Math.hypot(a.cx - b.cx, a.cy - b.cy);
 
@@ -71,6 +80,73 @@ function textAnnotation(id: string, text: string, startMs: number, endMs: number
     space: "frame",
     zIndex: 2,
   };
+}
+
+export const MARKER_LEAD_MS = 150;
+export const MARKER_HOLD_MS = 1200;
+const MARKER_POINT_SIZE = 0.06;
+const MARKER_MIN_SIZE = 0.04;
+const MARKER_MAX_AREA = 0.25;
+const MARKER_GAP_MS = 50;
+const MARKER_MIN_MS = 300;
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+const crc32 = (b: Buffer) => { let c = 0xffffffff; for (const x of b) c = CRC_TABLE[(c ^ x) & 255]! ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+function pngChunk(type: string, data: Buffer): Buffer {
+  const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const len = Buffer.alloc(4), crc = Buffer.alloc(4);
+  len.writeUInt32BE(data.length); crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([len, body, crc]);
+}
+
+/** A transparent PNG holding only a rounded-rectangle outline in #FFC400.
+ * Sized in real pixels so stretching it onto a box of the same pixel size keeps the stroke width. */
+export function ringPngBytes(wPx: number, hPx: number, strokePx = 4): Buffer {
+  const w = Math.max(1, Math.round(wPx)), h = Math.max(1, Math.round(hPx));
+  const r = Math.min(w, h) * 0.2, hx = w / 2 - r, hy = h / 2 - r;
+  const raw = Buffer.alloc((w * 4 + 1) * h);
+  for (let y = 0; y < h; y++) {
+    const row = y * (w * 4 + 1);
+    for (let x = 0; x < w; x++) {
+      // Signed distance to the rounded rectangle (negative inside); the stroke is centered strokePx/2 inside the edge.
+      const qx = Math.abs(x + 0.5 - w / 2) - hx, qy = Math.abs(y + 0.5 - h / 2) - hy;
+      const d = Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
+      const a = clamp(strokePx / 2 + 0.5 - Math.abs(d + strokePx / 2), 0, 1);
+      raw.set([255, 196, 0, Math.round(a * 255)], row + 1 + x * 4);
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr.set([8, 6, 0, 0, 0], 8); // 8-bit RGBA
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk("IHDR", ihdr), pngChunk("IDAT", deflateSync(raw)), pngChunk("IEND", Buffer.alloc(0))]);
+}
+
+export type Marker = { startMs: number; endMs: number; box: NRect };
+
+/** The box to highlight for an event: its visible rect (or a small square at its point), at least
+ * MARKER_MIN_SIZE per side and kept inside the frame. Undefined when off-frame or too large. */
+function markerBox(e: ActionEvent): NRect | undefined {
+  const p = e.point!;
+  const v = e.rect ? visibleRect(e.rect) : { x: p.cx - MARKER_POINT_SIZE / 2, y: p.cy - MARKER_POINT_SIZE / 2, w: MARKER_POINT_SIZE, h: MARKER_POINT_SIZE };
+  if (!v || v.w * v.h > MARKER_MAX_AREA) return undefined;
+  const w = Math.max(v.w, MARKER_MIN_SIZE), h = Math.max(v.h, MARKER_MIN_SIZE);
+  return { x: clamp(v.x + v.w / 2 - w / 2, 0, 1 - w), y: clamp(v.y + v.h / 2 - h / 2, 0, 1 - h), w, h };
+}
+
+/** One marker per clicked/typed element, from just before the action until shortly after, so a
+ * timing error of a few hundred ms still lands inside it. Ends before the next marker starts. */
+export function compileMarkers(events: ActionEvent[], durationMs: number): Marker[] {
+  const targets = normalizeEvents(events, durationMs)
+    .filter((e) => e.point && !e.redact && (e.kind === "click" || e.kind === "type"))
+    .flatMap((e) => { const box = markerBox(e); return box ? [{ t: e.tMs, box }] : []; });
+  const out: Marker[] = [];
+  targets.forEach((m, i) => {
+    const startMs = clamp(m.t - MARKER_LEAD_MS, 0, durationMs);
+    const next = targets[i + 1];
+    const endMs = Math.min(m.t + MARKER_HOLD_MS, durationMs, next ? clamp(next.t - MARKER_LEAD_MS, 0, durationMs) - MARKER_GAP_MS : durationMs);
+    if (endMs - startMs < MARKER_MIN_MS) return;
+    out.push({ startMs, endMs, box: m.box });
+  });
+  return out;
 }
 
 /** Step captions become lower-third text that lasts until the next caption. */
@@ -127,6 +203,7 @@ export function compileEditor(capture: CaptureResult, plan: EditPlan = {}): Edit
   return {
     zoomRegions: compileZooms(events, durationMs, plan.zoom),
     annotationRegions: compileAnnotations(events, durationMs, plan),
+    markers: plan.marker === false ? [] : compileMarkers(events, durationMs),
     trimRegions: (plan.trim ?? []).map((t, i) => ({ id: `agent-trim-${i + 1}`, startMs: t.startMs, endMs: t.endMs })),
     speedRegions: compileIdleSpeedups(events, durationMs, plan),
     autoZoomEnabled: false,

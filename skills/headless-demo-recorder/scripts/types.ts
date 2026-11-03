@@ -80,7 +80,12 @@ export type Step = StepAck & (
 
 export type EditPlan = {
   zoom?: { enabled?: boolean; depth?: 1 | 2 | 3 | 4 | 5 | 6; leadMs?: number; holdMs?: number; mergeDistance?: number };
-  /** Generate an animated cursor from the action log (headless runs have no real pointer). */
+  /** Highlight each clicked / typed element with a marker that spans the action time. Default true.
+   * A span tolerates the timing error between the action log and the UI reaction.
+   * Drawn into the video by `render` (OpenScreen annotations do not follow zooms), so it moves with the zoom. */
+  marker?: boolean;
+  /** Generate an animated cursor from the action log (headless runs have no real pointer).
+   * Default false: the click moment can be off from the real UI reaction, so use `marker` instead. */
   syntheticCursor?: boolean;
   /** Captions from step.caption, rendered as text annotations. */
   stepCaptions?: boolean;
@@ -120,7 +125,7 @@ export type Scenario = {
 // ---- Composition (several scenarios recorded together, joined into one video) ----
 
 /** Edit keys that make sense across streams; trim/idle speed-ups/speech/plan-level redact would break inspect's time mapping. */
-export type CompositionEdit = Pick<EditPlan, "zoom" | "syntheticCursor" | "stepCaptions" | "captionFontSize" | "titleFontSize" | "titles" | "style">;
+export type CompositionEdit = Pick<EditPlan, "zoom" | "marker" | "syntheticCursor" | "stepCaptions" | "captionFontSize" | "titleFontSize" | "titles" | "style">;
 /** startMs/endMs are on the aligned timeline (after leading offsets are removed). */
 export type SceneStream = { scenario: string; startMs?: number; endMs?: number };
 /** single: 1 stream; side-by-side: 2 (left, right). */

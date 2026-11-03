@@ -1,11 +1,12 @@
-import { access, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { compileEditor, synthesizeCursor, type EditorPatch } from "./compile.ts";
-import { ffprobe, log, parseNdjson, run } from "./exec.ts";
+import { compileEditor, ringPngBytes, synthesizeCursor, type EditorPatch, type Marker } from "./compile.ts";
+import { ffprobe, log, parseNdjson, run, runOk } from "./exec.ts";
 import { ToolError } from "./errors.ts";
 import type { CaptureResult, EditPlan, Output } from "./types.ts";
 
-// Defaults copied from a project written by `openscreen record --project` (v1.13).
+// Defaults copied from a project written by `openscreen record --project` (verified with 2.2.0).
 const EDITOR_DEFAULTS = {
   cursorTheme: "default", wallpaper: "/wallpapers/wallpaper11.jpg", wallpaperMotion: "none", shadowIntensity: 0.6,
   backgroundBlur: 0, motionBlurAmount: 0.2, depthOfField: true, borderRadius: 24, padding: 40,
@@ -31,21 +32,60 @@ async function openscreen(args: string[], label: string, timeoutMs = 15 * 60_000
  * 1:1 to capture times (not eligible for automatic acceptance). */
 export type RenderResult = {
   projectPath: string; outputPath: string; durationMs: number; width: number; height: number; zooms: number; annotations: number;
-  trimRegions: number; speedRegions: number; timelineEdited: boolean;
+  markers: number; trimRegions: number; speedRegions: number; timelineEdited: boolean;
 };
 
 /** Written next to the capture so `inspect` can report whether the export's timeline was edited. */
 export const RENDER_RECORD = "render.json";
 
-/** Write (or remove) `<video>.cursor.json`, which OpenScreen (v1.13) auto-loads from next to the
+/** Write (or remove) `<video>.cursor.json`, which OpenScreen (verified with 2.2.0) auto-loads from next to the
  * video. A synthetic track left by an earlier render must go when this render wants no cursor;
  * a real-cursor recording's sidecar is the recorded telemetry and is never touched. */
 export async function syncCursorSidecar(capture: CaptureResult, plan: EditPlan): Promise<boolean> {
   const sidecar = `${capture.videoPath}.cursor.json`;
-  const want = plan.syntheticCursor ?? (!capture.realCursor && capture.events.some((e) => e.point));
+  const want = plan.syntheticCursor === true;
   if (want) await writeFile(sidecar, JSON.stringify(synthesizeCursor(capture.events, capture.durationMs)));
   else if (!capture.realCursor) await rm(sidecar, { force: true });
   return want;
+}
+
+
+/** Burn ring markers into a copy of the video (OpenScreen annotations do not follow zooms, but
+ * the video does). Each ring is a PNG of `box x frame` pixels, overlaid unscaled while its span is on. */
+export async function burnMarkers(inPath: string, outPath: string, markers: Marker[], frame: { width: number; height: number }): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "hdr-markers-"));
+  try {
+    const inputs: string[] = [];
+    const chain: string[] = [];
+    for (const [i, m] of markers.entries()) {
+      const png = join(dir, `ring-${i}.png`);
+      await writeFile(png, ringPngBytes(m.box.w * frame.width, m.box.h * frame.height));
+      inputs.push("-i", png);
+      const x = Math.round(m.box.x * frame.width), y = Math.round(m.box.y * frame.height);
+      chain.push(`[${i ? `v${i}` : "0:v"}][${i + 1}:v]overlay=${x}:${y}:enable='between(t,${m.startMs / 1000},${m.endMs / 1000})'[v${i + 1}]`);
+    }
+    await runOk("ffmpeg", [
+      "-y", "-v", "error", "-i", inPath, ...inputs, "-filter_complex", chain.join(";"), "-map", `[v${markers.length}]`, "-map", "0:a?",
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", outPath,
+    ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** The video to hand to OpenScreen: `<projDir>/capture.marked.mp4` with the rings burned in, or the
+ * original when there is nothing to burn (a stale marked copy and its cursor sidecar are removed).
+ * A real-cursor recording is never re-encoded: its telemetry sidecar sits next to the original. */
+export async function videoWithMarkers(projDir: string, capture: CaptureResult, markers: Marker[]): Promise<{ videoPath: string; burned: number }> {
+  const marked = join(projDir, "capture.marked.mp4");
+  if (markers.length === 0 || capture.realCursor) {
+    if (markers.length > 0) log("markers skipped: a real-cursor recording keeps its original video (its cursor telemetry sits next to it)");
+    await rm(marked, { force: true });
+    await rm(`${marked}.cursor.json`, { force: true });
+    return { videoPath: capture.videoPath, burned: 0 };
+  }
+  await burnMarkers(capture.videoPath, marked, markers, { width: capture.width, height: capture.height });
+  return { videoPath: marked, burned: markers.length };
 }
 
 /** Compile edits into a .openscreen project next to the captured media and export it.
@@ -55,10 +95,9 @@ export async function render(projDir: string, name: string, capture: CaptureResu
   if (!opts.force && (await access(outPath).then(() => true, () => false))) {
     throw new ToolError("render", "OUTPUT_EXISTS", `${outPath} already exists`, "after-fix", "pass --force to overwrite, or change output.path");
   }
-  const video = capture.videoPath;
-
   const patch = opts.patch ?? compileEditor(capture, plan);
-  const wantCursor = await syncCursorSidecar(capture, plan);
+  const { videoPath: video, burned } = await videoWithMarkers(projDir, capture, patch.markers);
+  const wantCursor = await syncCursorSidecar({ ...capture, videoPath: video }, plan);
 
   const { style, ...regions } = patch;
   const isGif = outPath.endsWith(".gif");
@@ -69,7 +108,7 @@ export async function render(projDir: string, name: string, capture: CaptureResu
   };
   const projectPath = join(projDir, `${name}.openscreen`);
   await writeFile(projectPath, JSON.stringify(project, null, 2));
-  log(`project: ${projectPath} (${patch.zoomRegions.length} zooms, ${patch.annotationRegions.length} annotations, ${patch.speedRegions.length} speed-ups, cursor=${wantCursor})`);
+  log(`project: ${projectPath} (${patch.zoomRegions.length} zooms, ${patch.annotationRegions.length} annotations, ${patch.speedRegions.length} speed-ups, markers=${burned}, cursor=${wantCursor})`);
 
   const info = await run("openscreen", ["info", projectPath, "--json"]);
   const infoJson = parseNdjson(info.stdout)[0] as { screenVideoExists?: boolean } | undefined;
@@ -97,7 +136,7 @@ export async function render(projDir: string, name: string, capture: CaptureResu
   const probe = await ffprobe(outPath);
   const result: RenderResult = {
     projectPath, outputPath: outPath, durationMs: probe.durationMs, width: probe.width, height: probe.height, zooms: patch.zoomRegions.length, annotations: patch.annotationRegions.length,
-    trimRegions: patch.trimRegions.length, speedRegions: patch.speedRegions.length, timelineEdited: patch.trimRegions.length + patch.speedRegions.length > 0,
+    markers: burned, trimRegions: patch.trimRegions.length, speedRegions: patch.speedRegions.length, timelineEdited: patch.trimRegions.length + patch.speedRegions.length > 0,
   };
   await writeFile(join(projDir, RENDER_RECORD), JSON.stringify(result, null, 2));
   return result;

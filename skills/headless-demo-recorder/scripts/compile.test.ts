@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { centerOf, compileAnnotations, compileIdleSpeedups, compileZooms, synthesizeCursor } from "./compile.ts";
+import { MARKER_HOLD_MS, MARKER_LEAD_MS, centerOf, compileAnnotations, compileEditor, compileMarkers, ringPngBytes, compileIdleSpeedups, compileZooms, synthesizeCursor } from "./compile.ts";
+import { inflateSync } from "node:zlib";
 import { validateEvents } from "./validate.ts";
 import type { ActionEvent } from "./types.ts";
 
@@ -79,4 +80,72 @@ test("centerOf keeps a partly visible element's action point inside the frame", 
   // events.json built from it passes the check render runs (an unclamped center would not).
   expect(validateEvents([{ tMs: 0, kind: "click", point: p }], "e").filter((i) => i.level === "error")).toEqual([]);
   expect(validateEvents([{ tMs: 0, kind: "click", point: { cx: 0.5, cy: -0.02 } }], "e").some((i) => i.level === "error")).toBe(true);
+});
+
+const markers = (ev: ActionEvent[], durationMs = 20_000) => compileEditor({ videoPath: "v.mp4", width: 1280, height: 720, durationMs, events: ev, realCursor: false }, {}).markers;
+
+test("one marker per click/type with a point; press, scroll, mark, redact and point-less events get none", () => {
+  const ev: ActionEvent[] = [
+    click(1000, 0.2, 0.2),
+    { tMs: 3000, kind: "type", point: { cx: 0.5, cy: 0.5 }, rect: { x: 0.45, y: 0.48, w: 0.1, h: 0.04 } },
+    { tMs: 5000, kind: "press", point: { cx: 0.5, cy: 0.5 } },
+    { tMs: 6000, kind: "scroll", point: { cx: 0.5, cy: 0.5 } },
+    { tMs: 7000, kind: "mark", point: { cx: 0.5, cy: 0.5 } },
+    click(8000, 0.5, 0.5, { redact: true }),
+    { tMs: 9000, kind: "click" },
+  ];
+  const m = markers(ev);
+  expect(m).toHaveLength(2);
+  expect(m[0]).toMatchObject({ startMs: 1000 - MARKER_LEAD_MS, endMs: 1000 + MARKER_HOLD_MS });
+  const patch = compileEditor({ videoPath: "v.mp4", width: 1, height: 1, durationMs: 20_000, events: ev, realCursor: false }, {});
+  expect(patch.annotationRegions.some((a) => String(a.id).includes("marker"))).toBe(false);
+});
+
+test("marker: rect off the frame is cut to the visible part; tiny edge elements are widened and shifted inside", () => {
+  const [a] = markers([click(1000, 0.5, 0.1, { rect: { x: 0.4, y: -0.1, w: 0.2, h: 0.2 } })]);
+  expect(a!.box.x).toBeCloseTo(0.4); expect(a!.box.y).toBeCloseTo(0); expect(a!.box.w).toBeCloseTo(0.2); expect(a!.box.h).toBeCloseTo(0.1);
+  const [c] = markers([click(1000, 0.99, 0.5, { rect: { x: 0.99, y: 0.5, w: 0.005, h: 0.005 } })]);
+  expect(c!.box.w).toBeCloseTo(0.04); expect(c!.box.h).toBeCloseTo(0.04);
+  expect(c!.box.x + c!.box.w).toBeLessThanOrEqual(1 + 1e-9);
+  expect(c!.box.x).toBeGreaterThanOrEqual(0); expect(c!.box.y).toBeGreaterThanOrEqual(0);
+});
+
+test("marker: point-only events get a 0.06 box; page-sized rects get none", () => {
+  const [a] = markers([{ tMs: 1000, kind: "click", point: { cx: 0.5, cy: 0.5 } }]);
+  expect(a!.box.w).toBeCloseTo(0.06); expect(a!.box.h).toBeCloseTo(0.06);
+  expect(markers([click(1000, 0.5, 0.5, { rect: { x: 0, y: 0, w: 0.6, h: 0.5 } })])).toEqual([]);
+});
+
+test("markers stay inside the video, end before the next one, and are at least 300ms", () => {
+  const ev = [click(100, 0.2, 0.2), click(600, 0.4, 0.4), click(650, 0.6, 0.6), click(9900, 0.8, 0.8)];
+  const m = compileMarkers(ev, 10_000);
+  // The 600ms click (next starts 50ms later) and the 9900ms click (250ms left) are dropped.
+  expect(m).toHaveLength(2);
+  m.forEach((r, i) => {
+    expect(r.startMs).toBeGreaterThanOrEqual(0);
+    expect(r.endMs).toBeLessThanOrEqual(10_000);
+    expect(r.endMs - r.startMs).toBeGreaterThanOrEqual(300);
+    if (i) expect(r.startMs).toBeGreaterThan(m[i - 1]!.endMs);
+  });
+});
+
+test("edit.marker:false turns markers off", () => {
+  expect(markers([click(1000, 0.5, 0.5)])).toHaveLength(1);
+  const off = compileEditor({ videoPath: "v.mp4", width: 1, height: 1, durationMs: 5000, events: [click(1000, 0.5, 0.5)], realCursor: false }, { marker: false });
+  expect(off.markers).toEqual([]);
+});
+
+test("ringPngBytes: valid PNG header, matching size, transparent inside, opaque on the edge", () => {
+  const png = ringPngBytes(100, 60);
+  expect([...png.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+  expect(png.readUInt32BE(16)).toBe(100);
+  expect(png.readUInt32BE(20)).toBe(60);
+  // Single IDAT chunk: 8 sig + 25 IHDR, then length(4) "IDAT" data.
+  const len = png.readUInt32BE(33);
+  const raw = inflateSync(png.subarray(41, 41 + len));
+  const alpha = (x: number, y: number) => raw[y * (100 * 4 + 1) + 1 + x * 4 + 3]!;
+  expect(alpha(50, 30)).toBe(0);
+  expect(alpha(50, 1)).toBe(255);
+  expect(alpha(1, 30)).toBe(255);
+  expect(alpha(0, 0)).toBe(0);
 });

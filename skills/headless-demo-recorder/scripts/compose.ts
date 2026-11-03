@@ -2,7 +2,7 @@
 // ffmpeg composite argv. Pure functions (unit-tested in compose.test.ts) except buildComposite, which runs ffmpeg.
 // Rects named `cell`/`content` are fractions of the output frame (0..1).
 
-import { compileAnnotations, compileZooms, normalizeEvents, type AnnotationRegion, type EditorPatch, type ZoomRegion } from "./compile.ts";
+import { compileAnnotations, compileMarkers, compileZooms, normalizeEvents, type AnnotationRegion, type EditorPatch, type Marker, type ZoomRegion } from "./compile.ts";
 import { ffprobe, runOk } from "./exec.ts";
 import type { ActionEvent, CaptureResult, Composition, EditPlan, NPoint, NRect, Scene } from "./types.ts";
 
@@ -116,6 +116,7 @@ export function composeEditor(
   const scenes = planScenes(comp, captures);
   const zooms: ZoomRegion[] = [];
   const annotations: AnnotationRegion[] = [];
+  const markers: Marker[] = [];
   const events: ActionEvent[] = [];
   scenes.forEach((sc, i) => {
     events.push({ tMs: sc.offsetMs, kind: "mark", label: `scene ${i + 1}: ${sc.layout}` });
@@ -126,7 +127,7 @@ export function composeEditor(
       const all = normalizeEvents(cap.events, cap.durationMs);
       const local = all.filter((e) => e.tMs >= from && e.tMs < st.end + st.lead).map((e) => ({ ...e, tMs: e.tMs - from }));
       // A redaction blurs from its event to the end of the recording, so one before the segment
-      // still applies to all of it. Carry it as a bare mark: no point (no zoom/cursor), no caption.
+      // still applies to all of it. Carry it as a bare mark: no point (no zoom/marker), no caption.
       for (const e of all) if (e.redact && e.rect && e.tMs < from) local.unshift({ tMs: 0, kind: "mark", rect: e.rect, redact: true });
       // titles/style come only from the composition; scenario.edit supplies per-stream defaults.
       const plan: EditPlan = { ...scenarioEdits[st.scenario], ...comp.edit, titles: [] };
@@ -138,8 +139,10 @@ export function composeEditor(
       for (const a of compileAnnotations(local, segLen, { ...plan, redact, captionFontSize: fontSize })) {
         // The padded final frame still contains the redacted pixels.
         if (a.type === "blur" && a.endMs === segLen) a.endMs += st.padMs;
-        annotations.push({ ...a, ...shift(a), ...mapBox(a, a.type === "blur" ? st.content : st.cell), id: `s${i + 1}-${j + 1}-${a.id}` });
+        annotations.push({ ...a, ...shift(a), ...mapBox(a, a.space === "frame" ? st.cell : st.content), id: `s${i + 1}-${j + 1}-${a.id}` });
       }
+      if (plan.marker !== false)
+        for (const m of compileMarkers(local, segLen)) markers.push({ ...shift(m), box: mapRect(m.box, st.content) });
       for (const e of local)
         events.push({
           ...e,
@@ -152,7 +155,7 @@ export function composeEditor(
   const totalMs = scenes.reduce((n, s) => n + s.lengthMs, 0);
   annotations.push(...compileAnnotations([], totalMs, { titles: comp.edit?.titles, titleFontSize: comp.edit?.titleFontSize }));
   return {
-    patch: { zoomRegions: resolveZoomConflicts(zooms), annotationRegions: annotations, trimRegions: [], speedRegions: [], autoZoomEnabled: false, style: comp.edit?.style ?? {} },
+    patch: { zoomRegions: resolveZoomConflicts(zooms), annotationRegions: annotations, markers, trimRegions: [], speedRegions: [], autoZoomEnabled: false, style: comp.edit?.style ?? {} },
     events: events.sort((a, b) => a.tMs - b.tMs),
     scenes,
   };
