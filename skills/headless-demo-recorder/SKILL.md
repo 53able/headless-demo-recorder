@@ -92,6 +92,8 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
 
 Codex で `doctor` の権限項目が `Operation not permitted`、または `render` が空のメッセージの `PROJECT_INVALID` になったら、まずサンドボックス内で実行していないかを疑う（`references/codex-sandbox.md`）。
 
+`agent-desktop` が `PERM_DENIED Accessibility surface read failed for AXFrontmost` を返すのは、`doctor` の権限が `granted` でも起きる。アプリを絞らずに呼ぶと、無関係なアプリ1つの読み取り失敗で全体が失敗するため。下見で `agent-desktop` を直接呼ぶときは、`snapshot` / `find` / `list-windows` に必ず `--app <ローカライズ名>` を付ける。権限の付与を利用者に求めない。
+
 - `safe`: 何も起きていない。そのまま再実行してよい。
 - `after-fix`: `hint` が示す箇所を直してから再実行する。`render` 段階で失敗した場合は録画が残っているので、`artifacts.retryWith` のコマンドで書き出しだけをやり直せる。
 - `no`: 実アプリまたはページでステップが途中まで実行されている（録画中の `TARGET_NOT_FOUND` など）。次の順で対応し、再試行を繰り返さない。
