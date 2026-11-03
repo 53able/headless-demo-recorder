@@ -13,7 +13,7 @@
         "name": "すべて消去",
         "exact": true
       },
-      "caption": "前の計算を消して 0 から始める",
+      "caption": "0 から始める",
       "allowDestructive": true
     },
     {
@@ -23,7 +23,7 @@
         "name": "7",
         "exact": true
       },
-      "caption": "7 と 8 の合計を確かめる"
+      "caption": "7+8 を計算"
     },
     {
       "action": "click",
@@ -48,7 +48,7 @@
         "name": "計算実行",
         "exact": true
       },
-      "caption": "合計 15 を確かめる",
+      "caption": "答えは 15",
       "waitMs": 1500
     }
   ],
