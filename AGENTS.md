@@ -24,6 +24,6 @@
 - 外向き操作（push、PR、マージ、デプロイ、外部への送信、本番データの変更）：人の指示で行う。例外は、利用者が操作と範囲を明示的に許可した tasks.md の「任せる範囲」と、チームが明示的に許可した自動統合の段階だけ。過去の個別依頼を恒久的な許可に広げない。
 - 止まったときの相談先：作業を依頼した人
 - 費用・時間の上限：未設定
-- 現行仕様の参照先：運用ガイドの正本は `skills/headless-demo-recorder/SKILL.md`、入力 JSON の形式・制約の正本は `skills/headless-demo-recorder/scripts/types.ts`。`docs/tool-design-review.md` は設計レビュー記録として参照する。
+- 現行仕様の参照先：運用ガイドの正本は `skills/headless-demo-recorder/SKILL.md`、入力 JSON の形式・制約の正本は `skills/headless-demo-recorder/scripts/types.ts`。
 - スキル起動：手動段階の製品ネイティブ起動は利用者の明示的なコマンドに限る。通常の Read/Bash 等での手順・資産の参照は依頼と権限の範囲で行え、追加承認は不要。推奨や approved は次のネイティブ起動の指示ではなく、起動設定・参照は操作の許可や仕様・計画の承認を与えない。
 - 次に何をするか迷ったら Claude Code では `/ains`、Codex では `$ains`
