@@ -137,12 +137,17 @@ export async function render(projDir: string, name: string, capture: CaptureResu
   const st = await stat(outPath);
   if (st.size === 0) throw new ToolError("render", "EMPTY_OUTPUT", `export produced an empty file: ${outPath}`, "after-fix");
   const probe = await ffprobe(outPath);
+  // The effective regions as OpenScreen exported them: `style` is merged last and may replace them.
+  // Guarded because `style` is free-form; a non-array would otherwise crash `inspect`.
+  const timeline: RenderRecord["timeline"] = {
+    trimRegions: Array.isArray(project.editor.trimRegions) ? project.editor.trimRegions : [],
+    speedRegions: Array.isArray(project.editor.speedRegions) ? project.editor.speedRegions : [],
+  };
   const result: RenderResult = {
     projectPath, outputPath: outPath, durationMs: probe.durationMs, width: probe.width, height: probe.height, zooms: patch.zoomRegions.length, annotations: patch.annotationRegions.length,
-    markers: burned, trimRegions: patch.trimRegions.length, speedRegions: patch.speedRegions.length, timelineEdited: patch.trimRegions.length + patch.speedRegions.length > 0,
+    markers: burned, trimRegions: timeline.trimRegions.length, speedRegions: timeline.speedRegions.length,
+    timelineEdited: timeline.trimRegions.length + timeline.speedRegions.length > 0,
   };
-  // The effective regions (after `style` overrides), as OpenScreen exported them.
-  const timeline = { trimRegions: project.editor.trimRegions, speedRegions: project.editor.speedRegions } as RenderRecord["timeline"];
   await writeFile(join(projDir, RENDER_RECORD), JSON.stringify({ ...result, timeline } satisfies RenderRecord, null, 2));
   return result;
 }
