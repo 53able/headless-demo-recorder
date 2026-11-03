@@ -155,6 +155,7 @@ export function validateScenario(s: unknown, opts: ValidateOptions = {}): Issue[
   }
   const e = sc.edit;
   if (e?.zoom?.depth !== undefined && ![1, 2, 3, 4, 5, 6].includes(e.zoom.depth)) err("edit.zoom.depth", "must be 1..6");
+  for (const k of ["marker", "syntheticCursor"] as const) if (e?.[k] !== undefined && typeof e[k] !== "boolean") err(`edit.${k}`, "must be true or false");
   if (e?.speechCaptions && src?.type === "browser") warn("edit.speechCaptions", "browser capture has no audio; captions will be skipped");
   return issues;
 }
@@ -165,8 +166,8 @@ const num = (v: unknown): v is number => typeof v === "number" && Number.isFinit
 const in01 = (v: unknown): boolean => num(v) && v >= 0 && v <= 1;
 
 /** Shape of an ActionEvent[] file (a file source's `events`, or a project's events.json).
- * Points drive zooms and the synthetic cursor, so a wrong shape or a pixel coordinate is an
- * error. Rects only drive redaction and may legitimately hang off the frame, so out-of-range
+ * Points drive zooms and markers, so a wrong shape or a pixel coordinate is an
+ * error. Rects only drive redaction and marker size and may legitimately hang off the frame, so out-of-range
  * rects are warnings. */
 export function validateEvents(raw: unknown, at = "events"): Issue[] {
   const issues: Issue[] = [];
@@ -187,6 +188,7 @@ export function validateEvents(raw: unknown, at = "events"): Issue[] {
       else if (!in01(e.rect.x) || !in01(e.rect.y) || !in01(e.rect.w) || !in01(e.rect.h) || e.rect.x + e.rect.w > 1 + 1e-9 || e.rect.y + e.rect.h > 1 + 1e-9)
         warn(`${p}.rect`, "extends outside the frame (values are fractions 0..1); the redaction box may be clipped or misplaced");
     }
+    if ((e.kind === "click" || e.kind === "type") && e.point === undefined && e.redact !== true) warn(`${p}.point`, "click/type without point gets neither a zoom nor a marker");
     if (e.caption !== undefined && typeof e.caption !== "string") err(`${p}.caption`, "must be a string");
     for (const k of ["zoom", "redact"] as const) if (e[k] !== undefined && typeof e[k] !== "boolean") err(`${p}.${k}`, "must be true or false");
     if (e.redact === true && e.rect === undefined) warn(`${p}.redact`, "has no effect without rect");
@@ -197,7 +199,7 @@ export function validateEvents(raw: unknown, at = "events"): Issue[] {
 /** A composition is any object with a `scenes` array; everything else is treated as a scenario. */
 export const isComposition = (raw: unknown): boolean => Array.isArray((raw as { scenes?: unknown } | null)?.scenes);
 
-const COMPOSITION_EDIT_KEYS: (keyof CompositionEdit)[] = ["zoom", "syntheticCursor", "stepCaptions", "captionFontSize", "titleFontSize", "titles", "style"];
+const COMPOSITION_EDIT_KEYS: (keyof CompositionEdit)[] = ["zoom", "marker", "syntheticCursor", "stepCaptions", "captionFontSize", "titleFontSize", "titles", "style"];
 const STREAMS_PER_LAYOUT: Record<string, number> = { single: 1, "side-by-side": 2 };
 
 /** `scenarioNames[i]` is the name read from `scenarios[i]` (undefined if it could not be read). */
@@ -247,6 +249,7 @@ export function validateComposition(raw: unknown, scenarioNames: (string | undef
     else
       for (const k of Object.keys(c.edit))
         if (!COMPOSITION_EDIT_KEYS.includes(k as keyof CompositionEdit)) err(`edit.${k}`, `not supported in a composition (allowed: ${COMPOSITION_EDIT_KEYS.join(", ")})`);
+    for (const k of ["marker", "syntheticCursor"] as const) if (c.edit?.[k] !== undefined && typeof c.edit[k] !== "boolean") err(`edit.${k}`, "must be true or false");
   }
   return issues;
 }
