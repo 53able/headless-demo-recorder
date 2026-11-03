@@ -115,7 +115,7 @@
 
 | 種別 | 手順 | 期待結果 | 証拠 | 状態 |
 |---|---|---|---|---|
-| 正常系 | `run skills/headless-demo-recorder/assets/browser-wikipedia.json`、`run skills/headless-demo-recorder/assets/desktop-calculator.json` | `ok:true`、出力動画と `inspectSheet` が生成される | コンタクトシートで、ズーム・カーソル・字幕の位置を目視で確認した | pass |
+| 正常系 | `run skills/headless-demo-recorder/assets/browser-wikipedia.json`、`run skills/headless-demo-recorder/assets/desktop-calculator.json` | `ok:true`、出力動画と `inspectSheet` が生成される | コンタクトシートで、ズーム・マーカー・字幕の位置を目視で確認した | pass |
 | 誤解系 | 録画に持ち込めない `@e3` 参照や、desktop での `scroll` を含むシナリオで `check` | 該当パス付きの error が出て、起動しない | `validate.test.ts` | pass |
 | 誤出力系 | 書き出し後に `inspect` で目視確認。`--edit` で depth を変えて `render` | 誤りを再録画なしで修正できる | `render` が約4秒で完了し、`plan` で depth が4に変わったことを確認 | pass |
 | 副作用系 | `text=Delete` を含むシナリオで `run` | `INVALID_SCENARIO`、何も起動しない | CLI の出力と終了コード1 | pass |

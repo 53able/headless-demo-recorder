@@ -140,7 +140,7 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
     const r = await ad<{ matches: { value?: unknown }[] }>("find", "--window-id", win.id, "--role", "scrollbar").catch(() => ({ matches: [] }));
     return r.matches.map((m) => String(m.value ?? "")).join("|");
   };
-  /** Ref and normalized box of a target; the box is optional (it only places zoom and cursor). */
+  /** Ref and normalized box of a target; the box is optional (it only places zoom and marker). */
   const locate = async (t: DesktopTarget | string) => {
     const ref = await resolveRef(t);
     const b = await ad<{ value: Bounds }>("get", ref, "--property", "bounds").catch(() => undefined);
@@ -206,7 +206,7 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
         case "scroll": {
           if (!step.target) throw new Error("desktop scroll needs a target element");
           const { ref, point } = await locate(step.target);
-          // Scrolling is not worth a zoom; the point only moves the synthetic cursor there.
+          // Scrolling is not worth a zoom or a marker; the point only moves the synthetic cursor (when enabled).
           events.push({ tMs: now(), kind: "scroll", label: JSON.stringify(step.target), caption, point });
           await guard();
           const amount = Math.max(1, Math.round((step.px ?? 300) / 100));

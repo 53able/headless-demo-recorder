@@ -1,6 +1,6 @@
 ---
 name: headless-demo-recorder
-description: ブラウザや macOS アプリをヘッドレスで操作しながら録画し、ズーム・カーソル・字幕・ぼかしを付けた MP4/GIF のデモ動画を人手を介さずに作る。録画を開いたまま画面を観察して次の操作を1手ずつ決めることも、複数のエージェントがそれぞれの録画を同時に操作して1本に結合することも、録画済みの動画に後から編集を足すこともできる。Use when the user asks for a demo, walkthrough, or screen-recording video of a web page or a macOS app, wants agents to operate apps while being recorded, or wants zoom/captions/blur added to an existing screen recording. Don't use for live screen sharing, manual GUI video editing, physical mouse/drag input, or recording outside macOS.
+description: ブラウザや macOS アプリをヘッドレスで操作しながら録画し、ズーム・マーカー・字幕・ぼかしを付けた MP4/GIF のデモ動画を人手を介さずに作る。録画を開いたまま画面を観察して次の操作を1手ずつ決めることも、複数のエージェントがそれぞれの録画を同時に操作して1本に結合することも、録画済みの動画に後から編集を足すこともできる。Use when the user asks for a demo, walkthrough, or screen-recording video of a web page or a macOS app, wants agents to operate apps while being recorded, or wants zoom/captions/blur added to an existing screen recording. Don't use for live screen sharing, manual GUI video editing, physical mouse/drag input, or recording outside macOS.
 ---
 
 # headless-demo-recorder
@@ -61,7 +61,7 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
 4. `run scenarios/<name>.json` を実行する。
 5. **`inspectSheet` を開いて目で確認する。** 書き出しに成功しても、動画の中身が正しいとは限らない。各コマについて、次の4点を確かめる。
    - 操作した要素が映っている。
-   - カーソルがその要素の上にある。
+   - 操作した要素にマーカーが重なっている。
    - 字幕が読める。
    - 個人情報が映っていない。
 6. 修正は再録画せずに行う。`events.json`（タイミング、字幕、座標）またはシナリオの `edit` を直し、`render <project-dir> --scenario <file> --force` で再生成してから、もう一度 `inspect` する。
@@ -119,15 +119,23 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
    - 揃えるのは、開始時刻の差が10分以内の場合だけ。同じ group 名を別の日に使い回した録画は揃えない。録り直すときは、全員分を同時に始め直す。
 5. 同じアプリを2つのセッションで操作しない。desktop の入力は同じウィンドウに届くため。
 
+## マーカーとカーソル
+
+- 既定では合成カーソルは描かない。操作した要素に約 1.2 秒、黄色のリングを動画へ焼き込む（`render` が `capture.marked.mp4` を作る）。動画ごとズームされるので、リングは要素に重なったまま動く。対象は `point` を持つ `click` / `type` で、`fill` は `type`、`select` は `click` として記録される。
+- マーカーを付けないもの: `press` / `scroll` / `mark`、`redact: true` のクリック、`point` の無いイベント、画面の 1/4 を超える面積の要素。
+- step の `zoom: false` はマーカーを止めない。マーカーを止めるのは `edit.marker: false`。
+- `edit.syntheticCursor: true` を明示したときだけ、従来どおり合成カーソルを描く。クリックの瞬間が実際の UI の反応と数百 ms ずれることがある。
+- composition では、マーカーの有無は各録画の `{...scenario.edit, ...composition.edit}` で決まる。カーソルは `composition.edit.syntheticCursor` だけで決まる。
+
 ## file ソース（既存の動画を編集する）
 
-録画済みの動画（QuickTime、OBS、以前の `capture.mp4` など）に、ズーム・カーソル・字幕を付けて書き出す。ブラウザも対象アプリも起動しない。`run` を使ってよく、その capture 段階は ffmpeg による変換だけを行う（書き出しには `openscreen` を使うので、Codex ではサンドボックス外での実行が要る）。
+録画済みの動画（QuickTime、OBS、以前の `capture.mp4` など）に、ズーム・マーカー・字幕を付けて書き出す。ブラウザも対象アプリも起動しない。`run` を使ってよく、その capture 段階は ffmpeg による変換だけを行う（書き出しには `openscreen` を使うので、Codex ではサンドボックス外での実行が要る）。
 
-- `source`: `{ "type": "file", "path": "<動画>", "events": "<操作ログ>" }`。`events` は省略できる（その場合、ズーム・カーソル・字幕は付かない）。パスは実行時のカレントディレクトリからの相対で解決される。
+- `source`: `{ "type": "file", "path": "<動画>", "events": "<操作ログ>" }`。`events` は省略できる（その場合、ズーム・マーカー・字幕は付かない）。パスは実行時のカレントディレクトリからの相対で解決される。
 - 操作ログは `ActionEvent` の配列（`scripts/types.ts`）。座標はすべて動画のフレームに対する 0〜1 の比率で表す。
   - `tMs`（必須）: 動画上の時刻（ミリ秒）
   - `kind`（必須）: `click` / `type` / `press` / `scroll` / `navigate` / `wait` / `mark`
-  - `point`: 操作した点 `{cx, cy}`（`{x, y}` ではない。ピクセル値ではなく比率）。`point` を持つ `click` / `type` がズームの中心になり、`point` を持つイベントにカーソルが動く
+  - `point`: 操作した点 `{cx, cy}`（`{x, y}` ではない。ピクセル値ではなく比率）。`point` を持つ `click` / `type` がズームの中心になり、その要素にマーカーが重なる（マーカーの詳細は「マーカーとカーソル」）
   - `rect`: 対象要素の矩形 `{x, y, w, h}`。ぼかし専用（`redact: true` と組で使う。`rect` の無い `redact` は効かない）
   - `caption`（字幕の文字列）、`zoom`（false でそのイベントをズームしない）、`redact`
 - `check` は操作ログの形式も検証する。ログの中身（ラベルや座標）が動画に映っているものと合っているかは検証しないので、作業ループ5の目視確認で確かめる。
@@ -141,7 +149,7 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
 1. 参照先のシナリオは先に単体で `check` を通し、下見を済ませておく。`check <composition>` は参照先の検証も含めて1つの JSON で返す。
 2. `--allow-origin` / `--allow-app` は参照先すべてに掛かる。desktop を2本録るなら両方のアプリを列挙する。
 3. 参照先は同時に録画を開始し、あとは独立に進む。ステップ単位の待ち合わせ（A の操作を B が待つ）はできない。
-4. `inspectSheet` では、各場面の切り替わり（`events.json` の `scene N:` の mark）と、左右それぞれのセルに字幕とカーソルが出ていることを確かめる。
+4. `inspectSheet` では、各場面の切り替わり（`events.json` の `scene N:` の mark）と、左右それぞれのセルに字幕とマーカーが出ていることを確かめる。
 5. 修正は参照先の `events.json` か composition の `scenes` / `edit` を直し、`render <compProj> --composition <file> --force` で結合だけをやり直す。
 
 - `CAPTURE_PARTIAL_FAILED`（`retry: no`）のときは、アプリの状態を戻してから `run <composition> --force` で全本を撮り直す。別の実行で撮った録画は開始時刻を揃えられない（`runId` が違う）ので、1本だけ撮り直して結合しない。
