@@ -43,7 +43,7 @@ OpenScreen の `--auto-zoom` は、実際のマウスクリックを手がかり
   - macOS で PATH に通すときは、シンボリックリンクではなく実体を `exec` するスクリプトを置く（例: `printf '#!/bin/sh\nunset ELECTRON_RUN_AS_NODE\nexec /Applications/Openscreen.app/Contents/MacOS/Openscreen "$@"\n'`）。シンボリックリンク経由だと `help` と `export` は動くが、`record` が `Renderer crashed` で失敗する（実測）。
 - デスクトップ録画には、ターミナルへの画面収録とアクセシビリティの権限付与が必要
 
-スキルの導入でまとめて入るのは、スキル本体（`SKILL.md`）、CLI（`scripts/`）、例（`assets/`）だけ。上の外部ツールと権限は別に用意する。
+スキルの導入でまとめて入るのは、スキル本体（`SKILL.md` と `references/`）、CLI（`scripts/`）、例（`assets/`）だけ。上の外部ツールと権限は別に用意する。
 
 ## インストール
 
@@ -290,7 +290,7 @@ bun $S/scripts/cli.ts session stop out/s.project                    # 止めて�
 
 ## 開発
 
-スキルのディレクトリ `skills/headless-demo-recorder/` が配布の単位で、`npx skills add` はその中身（`SKILL.md`、`scripts/`、`assets/`）をそのまま利用者の導入先に置く。リポジトリ直下、`tests/`、`demo/`、`docs/` は配られない。
+スキルのディレクトリ `skills/headless-demo-recorder/` が配布の単位で、`npx skills add` はその中身（`SKILL.md`、`references/`、`scripts/`、`assets/`）をそのまま利用者の導入先に置く。リポジトリ直下、`tests/`、`demo/`、`docs/` は配られない。
 
 ```bash
 git clone https://github.com/53able/headless-demo-recorder && cd headless-demo-recorder
