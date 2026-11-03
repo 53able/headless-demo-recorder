@@ -70,7 +70,7 @@ test("events files must use {cx, cy} points and {x, y, w, h} rects", () => {
 test("pixel points are errors; off-frame rects and rect-less redaction are warnings", () => {
   const issues = validateEvents([
     { tMs: 0, kind: "click", point: { cx: 640, cy: 360 } },
-    { tMs: 1, kind: "type", rect: { x: 0.9, y: 0.5, w: 0.2, h: 0.1 } },
+    { tMs: 1, kind: "type", point: { cx: 0.5, cy: 0.5 }, rect: { x: 0.9, y: 0.5, w: 0.2, h: 0.1 } },
     { tMs: 2, kind: "type", redact: true },
   ]);
   expect(issues.map((i) => [i.path, i.level])).toEqual([["events[0].point", "error"], ["events[1].rect", "warning"], ["events[2].redact", "warning"]]);
@@ -157,4 +157,18 @@ test("session steps: refs from session observe are valid only with liveRefs", ()
     expect(errs({ action: "click", target: t }, true)).toEqual([]);
   }
   expect(errs(null, true)).toEqual(["step"]);
+});
+
+test("edit.marker and edit.syntheticCursor must be boolean in a scenario and in a composition", () => {
+  for (const k of ["marker", "syntheticCursor"]) {
+    expect(errors({ ...base, edit: { [k]: "yes" } })).toEqual([`edit.${k}`]);
+    expect(errors({ ...base, edit: { [k]: false } })).toEqual([]);
+    expect(compErrors({ ...comp, edit: { ...comp.edit, [k]: 1 } })).toEqual([`edit.${k}`]);
+    expect(compErrors({ ...comp, edit: { ...comp.edit, [k]: true } })).toEqual([]);
+  }
+});
+
+test("click/type events without a point warn that neither zoom nor marker will apply", () => {
+  const w = validateEvents([{ tMs: 0, kind: "click" }, { tMs: 1, kind: "type", point: { cx: 0.5, cy: 0.5 } }, { tMs: 2, kind: "scroll" }]);
+  expect(w.map((i) => [i.path, i.level])).toEqual([["events[0].point", "warning"]]);
 });

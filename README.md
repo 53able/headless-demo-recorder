@@ -3,7 +3,7 @@
 エージェントが UI を操作している間の画面を録画する。そのあと、人の手を介さずに動画を編集・書き出しする。編集で加えるのは次の5つ。
 
 - ズーム
-- 動くカーソル
+- 操作位置のマーカー（任意で動くカーソル）
 - 字幕
 - 秘密情報のぼかし
 - 待ち時間の早送り
@@ -14,7 +14,7 @@ scenario.json ─┬─ browser: agent-browser（操作 + WebM 録画 + 要素�
                └─ file:    既存の任意の動画（+ 任意の events.json）
                      │
                      ▼  操作ログ: [{ tMs, kind, rect, point, caption, redact }]
-               compile.ts ── zoomRegions / annotationRegions / speedRegions / 合成 cursor.json
+               compile.ts ── zoomRegions / annotationRegions / speedRegions / マーカー（動画へ焼き込む）/ 合成 cursor.json（任意）
                      │
                      ▼
                openscreen export（ヘッドレス）──▶ MP4 / GIF
@@ -27,7 +27,8 @@ OpenScreen の `--auto-zoom` は、実際のマウスクリックを手がかり
 そこで各アクションの実行時に、対象要素の矩形と動画上の時刻を記録する。`compile.ts` はこの操作ログから次のものを生成する。
 
 - **ズーム**: 操作した要素を中心にズームする。近接したアクションは1つのズームにまとめ、ズーム同士が重ならないようにする。
-- **合成カーソル**: `<video>.cursor.json` として書き出す。OpenScreen はこのファイルを動画の横に置かれた付随ファイルとして自動で読み込み、各要素へ滑らかに移動して時刻どおりにクリックするカーソルを描画する。
+- **マーカー**: 既定で有効。`point` を持つ click / fill / select の要素に、約 1.2 秒、黄色のリングを動画へ焼き込む（`render` が ffmpeg で `capture.marked.mp4` を作り直す。`capture.mp4` は変えない）。ズームは動画ごと拡大されるので、リングは要素に重なったまま動く。`press` / `scroll` / `mark`、`redact: true` のクリック、画面の 1/4 を超える面積の要素には付かない。`edit.marker: false` で止められる。
+- **合成カーソル**: 既定では無効。`edit.syntheticCursor: true` で有効になり、`<video>.cursor.json` として書き出す。OpenScreen はこのファイルを動画の横に置かれた付随ファイルとして自動で読み込み、各要素へ滑らかに移動して時刻どおりにクリックするカーソルを描画する。クリックの瞬間が実際の UI の反応と数百 ms ずれることがある。
 - **字幕**: `step.caption` の内容を、画面に固定したテキストとして表示する（`space: "frame"`）。ズームしても位置と大きさは変わらない。
 - **ぼかし**: `redact: true` を付けた要素に適用する。
 - **早送り**: `idleSpeedupMs` を超えて何も操作しない区間を早送りする。
@@ -138,7 +139,7 @@ bun $S/scripts/cli.ts session stop out/s.project                    # 止めて�
 - `scenarios` は 1〜2 本。参照先は同時に録画を開始する（開始時刻の差は結果 JSON の `startSkewMs`。実測 100〜400ms）。各録画は独立に進み、ステップ単位の待ち合わせはしない。
 - `scenes` は順に再生される。`single` は1本を全面に、`side-by-side` は2本を左右に並べる。各 stream は `startMs` / `endMs`（揃えた後の録画上の時刻）で区間を切れる。
 - 出力フレームは `size`（既定 1920x1080）。録画はセルに収まるよう縦横比を保って拡縮し、余白は暗色で埋める。
-- ズーム・字幕・合成カーソルは各録画から引き継ぐ。ズームの設定と字幕の大きさは参照先の `scenario.edit` が既定値で、`composition.edit` の同名キーで上書きする。`titles` と `style` は composition のみ。`trim`・`idleSpeedupMs`・`speechCaptions`・composition 自体の `edit.redact` は使えない。参照先の `scenario.edit.redact` は録画上の時刻から各場面の時刻へ変換して適用する。
+- ズーム・字幕・マーカーは各録画から引き継ぐ。ズームの設定と字幕の大きさは参照先の `scenario.edit` が既定値で、`composition.edit` の同名キーで上書きする。マーカーの有無も同じ規則（`{...scenario.edit, ...composition.edit}`）で決まる。合成カーソルは `composition.edit.syntheticCursor` だけで決まり、参照先の `scenario.edit.syntheticCursor` は使わない。`titles` と `style` は composition のみ。`trim`・`idleSpeedupMs`・`speechCaptions`・composition 自体の `edit.redact` は使えない。参照先の `scenario.edit.redact` は録画上の時刻から各場面の時刻へ変換して適用する。
 - ズームは出力全体に1つしか掛からない。左右並べで2本のズームの時刻が重なったときは、先に始まった方を採用し、後の方は捨てる。片方のセルにズームしている間、もう片方のセルはほぼ画面外に出る。
 - 結果 JSON は単一シナリオと同じ形に `projectDirs`（参照先の project）と `startSkewMs` が加わる。合成後の project（`out/<name>.project/`）の `events.json` は派生物で、`render` のたびに上書きされる。手で直すのは参照先の `events.json`。
 - 直すときは `render out/calc-wiki.project --composition demo/calc-wiki.json --force`。参照先の録画はそのまま使う。
@@ -238,7 +239,7 @@ bun $S/scripts/cli.ts session stop out/s.project                    # 止めて�
 > 「2つのエージェントに、それぞれ計算機とブラウザを同時に操作させて、左右に並べた動画にして」
 
 - エージェントごとにシナリオを用意し、同じ `--group` で `session start` する。各エージェントは自分の project だけを `observe` / `act` する。全員が `session stop` したら、composition を `render <compProj> --composition <c.json> --force` で結合する。開始時刻は自動で揃う。
-- 動画のカーソルは、操作ログから各セルに合成して描く。実際のマウスポインタは動かないので、利用者は録画中も自分の作業を続けられる。
+- 動画には、操作ログから各セルに操作した要素のマーカーを付ける（既定）。`composition.edit.syntheticCursor: true` を指定したときだけ、カーソルも各セルに合成して描く。実際のマウスポインタは動かないので、利用者は録画中も自分の作業を続けられる。
 
 ### 録り直さずに直す
 > 「2つ目の字幕を変えて、ズームを弱くして」

@@ -41,7 +41,7 @@ test("segment-local time subtracts start and lead", () => {
   expect(sc!.streams[0]).toMatchObject({ start: 1000, end: 9700, lead: 300 });
   const { events, patch } = composeEditor(c, caps, {});
   expect(events.find((e) => e.kind === "click")!.tMs).toBe(1000);
-  expect(patch.annotationRegions.find((a) => a.type === "text")!.startMs).toBe(800);
+  expect(patch.annotationRegions.find((a) => String(a.id).includes("agent-caption"))!.startMs).toBe(800);
 });
 
 test("scene length is the longest stream; the shorter one is padded", () => {
@@ -65,6 +65,7 @@ test("AC-7: a single full-frame scene matches compileEditor", () => {
   const got = composeEditor(comp([{ layout: "single", streams: [{ scenario: "a" }] }]), { a }, { a: edit });
   expect(got.patch.zoomRegions).toEqual(want.zoomRegions);
   expect(got.patch.annotationRegions.map((r) => ({ ...r, id: String(r.id).replace(/^s1-1-/, "") }))).toEqual(want.annotationRegions);
+  expect(got.patch.markers).toEqual(want.markers);
   expect(got.events).toEqual([{ tMs: 0, kind: "mark", label: "scene 1: single" }, ...ev]);
 });
 
@@ -81,6 +82,22 @@ test("side-by-side: right-cell captions and points land in the right half", () =
   // Both clicks start a zoom at the same time; only the left one survives.
   expect(patch.zoomRegions).toHaveLength(1);
   expect(patch.zoomRegions[0]!.focus.cx).toBeLessThan(0.5);
+});
+
+test("side-by-side: markers map into the cell's video area and shift by the scene start; captions stay in the cell", () => {
+  const caps = { a: cap(230, 408, 5000, [click(1000, 0.5, 0.5, { caption: "left" })]), b: cap(1280, 800, 5000, [click(1000, 0.5, 0.5, { caption: "right" })]) };
+  const { patch, scenes } = composeEditor(comp([{ layout: "single", streams: [{ scenario: "a" }] }, { layout: "side-by-side", streams: [{ scenario: "a" }, { scenario: "b" }] }]), caps, {});
+  expect(patch.markers).toHaveLength(3);
+  const right = patch.markers[2]!;
+  const st = scenes[1]!.streams[1]!;
+  expect(right.startMs).toBe(5000 + 1000 - 150);
+  expect(right.endMs).toBe(5000 + 1000 + 1200);
+  // A 0.04-wide rect around the click center maps into st.content.
+  expect(right.box.x).toBeCloseTo(st.content.x + 0.48 * st.content.w);
+  expect(right.box.w).toBeCloseTo(0.04 * st.content.w);
+  const caption = patch.annotationRegions.find((r) => r.id === "s2-2-agent-caption-1") as unknown as { position: { x: number } };
+  expect(caption.position.x).toBeCloseTo(st.cell.x * 100 + 0.08 * st.cell.w * 100);
+  expect(right.box.x).toBeGreaterThan(st.cell.x);
 });
 
 test("compositeArgs: one input per scene stream, hstack per side-by-side, one concat", () => {

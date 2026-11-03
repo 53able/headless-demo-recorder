@@ -46,9 +46,9 @@
 
     { "action": "fill", "target": "#terminal textarea", "value": "clear; headless-demo-recorder session stop $P 2>/dev/null | jq -c '{ok, events}'; headless-demo-recorder render $P --scenario demo/howto/session-wikipedia.json --force 2>/dev/null | jq -c '{ok, outputPath} | .outputPath |= sub(\".*/out/\"; \"out/\")'", "zoom": false, "caption": "stop で保存し、render で書き出す", "waitMs": 700 },
     { "action": "press", "key": "Enter", "waitMs": 30000 },
-    { "action": "open", "url": "http://127.0.0.1:7681/demo/sheet.html?src=wikipedia-search.project/inspect-sheet.png", "caption": "inspect-sheet：各コマで要素・カーソル・字幕を目で確かめる", "waitMs": 3000 },
+    { "action": "open", "url": "http://127.0.0.1:7681/demo/sheet.html?src=wikipedia-search.project/inspect-sheet.png", "caption": "inspect-sheet：各コマで要素・マーカー・字幕を目で確かめる", "waitMs": 3000 },
     { "action": "wait", "ms": 2500 },
-    { "action": "open", "url": "http://127.0.0.1:7681/demo/media.html?src=wikipedia-search.mp4", "caption": "書き出した MP4：ズーム・カーソル・字幕は操作ログから付く", "waitMs": 3000 },
+    { "action": "open", "url": "http://127.0.0.1:7681/demo/media.html?src=wikipedia-search.mp4", "caption": "書き出した MP4：ズーム・マーカー・字幕は操作ログから付く", "waitMs": 3000 },
     { "action": "wait", "ms": 3000 },
     { "action": "wait", "ms": 3000 },
     { "action": "open", "url": "http://127.0.0.1:7681/demo/media.html?src=calculator.gif", "caption": "desktop の録画は GIF でも書き出せる", "waitMs": 3000 },
@@ -66,7 +66,6 @@
   ],
   "edit": {
     "zoom": { "enabled": false },
-    "syntheticCursor": false,
     "captionFontSize": 40,
     "idleSpeedupMs": 6000,
     "idleSpeed": 4,
