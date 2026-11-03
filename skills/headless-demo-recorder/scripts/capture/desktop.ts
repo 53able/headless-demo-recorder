@@ -70,7 +70,8 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
     app = r.app; // localized process name (e.g. "計算機" for Calculator)
     await sleep(1000);
   }
-  const wins = await ad<Win[]>("list-windows");
+  // Filtered: an unfiltered inventory fails as a whole when any other app's AX surface is unreadable.
+  const wins = await ad<Win[]>("list-windows", "--app", app);
   const win = wins.find((w) => w.app_name === app && w.visible && w.bounds.width > 0);
   if (!win) throw new Error(`no visible window for app ${app}`);
   /** Refuse unless the window's process is an allowed app. Called before every input. */
@@ -128,7 +129,7 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
   const resolveRef = async (t: DesktopTarget | string): Promise<string> => {
     if (typeof t === "string") return t; // already a qualified ref (from find, or `session observe`)
     await guard();
-    const q = ["find", "--window-id", win.id, ...(t.role ? ["--role", t.role] : []), ...(t.name ? ["--name", t.name] : []), ...(t.text ? ["--text", t.text] : []), ...(t.exact ? ["--exact"] : [])];
+    const q = ["find", "--app", app, "--window-id", win.id, ...(t.role ? ["--role", t.role] : []), ...(t.name ? ["--name", t.name] : []), ...(t.text ? ["--text", t.text] : []), ...(t.exact ? ["--exact"] : [])];
     const r = await ad<{ matches: { ref_id?: string; interactive?: boolean }[] }>(...q);
     const m = r.matches.find((x) => x.ref_id && x.interactive) ?? r.matches.find((x) => x.ref_id);
     if (!m?.ref_id) throw new Error(`no element for ${JSON.stringify(t)}`);
@@ -137,7 +138,7 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
   };
   /** Positions of the recorded window's scrollbars, as one comparable string ("" when it has none). */
   const scrollbarValues = async () => {
-    const r = await ad<{ matches: { value?: unknown }[] }>("find", "--window-id", win.id, "--role", "scrollbar").catch(() => ({ matches: [] }));
+    const r = await ad<{ matches: { value?: unknown }[] }>("find", "--app", app, "--window-id", win.id, "--role", "scrollbar").catch(() => ({ matches: [] }));
     return r.matches.map((m) => String(m.value ?? "")).join("|");
   };
   /** Ref and normalized box of a target; the box is optional (it only places zoom and marker). */
@@ -264,11 +265,11 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
   };
   const observe = async (o: { screenshot?: string } = {}) => {
     await guard();
-    const snapshot = await ad<unknown>("snapshot", "--window-id", win.id, "-i", "--compact");
+    const snapshot = await ad<unknown>("snapshot", "--app", app, "--window-id", win.id, "-i", "--compact");
     const next = new Map<string, string>();
     collect(snapshot, next);
     refs = next;
-    if (o.screenshot) await ad("screenshot", "--window-id", win.id, o.screenshot);
+    if (o.screenshot) await ad("screenshot", "--app", app, "--window-id", win.id, o.screenshot);
     return { tMs: now(), app, window: title, snapshot, ...(o.screenshot ? { screenshot: o.screenshot } : {}) };
   };
 

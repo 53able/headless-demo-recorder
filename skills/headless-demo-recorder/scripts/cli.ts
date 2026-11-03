@@ -20,16 +20,17 @@ import { type Issue, isComposition, normalizeOrigin, validateComposition, valida
 const USAGE = `headless capture → edit → export
 
   doctor                          R0  tools, versions, OS permissions (read-only)
-  schema                          R0  input formats (TypeScript types), the agent guide and example files
+  schema                          R0  input formats (TypeScript types), the agent guide, the references it
+                                      points to for some requests, and example files
   check   <scenario.json>         R0  validate the scenario; nothing is launched
   capture <scenario.json>         R2  drive the UI and record → <out>.project/capture.mp4 + events.json
   render  <project-dir> [--scenario s.json] [--edit edit.json] [--out file]
                                   R1  compile edits + export from a saved capture (no re-recording)
   inspect <project-dir> [--video file]
                                   R0  one frame per action → inspect-sheet.png for visual review
-  plan    <project-dir> [--edit edit.json]
+  plan    <project-dir> [--scenario s.json] [--edit edit.json]
                                   R0  print the editor regions that render would write
-  run     <scenario.json>         check → capture → render → inspect
+  run     <scenario.json>         R2  check → capture → render → inspect
   session start   <scenario.json> [--group g] [--idle-timeout s]
                                   R2  start recording and keep it open (browser/desktop); the
                                       scenario's steps, if any, run first
@@ -37,7 +38,8 @@ const USAGE = `headless capture → edit → export
                                   R0* accessibility snapshot (refs usable in act) [+ PNG] of the live UI
   session act     <project-dir> '<step json>'
                                   R2  one step, checked like a scenario step; refs from observe are valid
-  session status  <project-dir>   R0  recording / stopped / failed, elapsed ms, logged events
+  session status  <project-dir>   R0  recording / stopping / stopped / failed (or recorder exited), elapsed ms,
+                                      logged events
   session stop    <project-dir>   R1  stop recording and save the project (then render / inspect)
                                   Sessions started with the same --group are time-aligned when a
                                   composition joins them, so several agents can each drive one.
@@ -46,7 +48,7 @@ const USAGE = `headless capture → edit → export
 
 Flags: --force (overwrite an existing capture/output), --keep-work (keep raw capture files),
        --screenshot (session observe: also save a PNG)
-Guards (check/capture/run):
+Guards (check/capture/run/session start):
   --allow-origin <origin>   repeatable; every URL must match scheme+host+port; the browser is
                             limited to these hosts (agent-browser --allowed-domains)
   --allow-app <bundleId>    repeatable; desktop input only to these apps (deny list always applies)
@@ -450,8 +452,10 @@ async function main(argv: string[]): Promise<unknown> {
       // root = the skill directory (<skill>/scripts/cli.ts → <skill>). Paths are the real ones, not the symlink's.
       const root = dirname(dirname(fileURLToPath(import.meta.url)));
       const examples = (await readdir(join(root, "assets"))).filter((n) => n.endsWith(".json")).map((n) => join(root, "assets", n));
+      // Procedures the guide tells the agent to read only for some requests (session, file source, ...).
+      const references = (await readdir(join(root, "references"))).filter((n) => n.endsWith(".md")).sort().map((n) => join(root, "references", n));
       return {
-        ok: true, guide: join(root, "SKILL.md"), examples,
+        ok: true, guide: join(root, "SKILL.md"), references, examples,
         note: "Scenario = one recording; Composition = 1-2 scenarios recorded together and joined; ActionEvent[] = an events.json. Paths inside a scenario resolve against the current directory. The examples are templates written for the repository root as cwd; copy and adapt them rather than running them in place. Value limits (0..1 fractions, max 2 scenarios, ...) are enforced by `check`.",
         types: await readFile(join(root, "scripts", "types.ts"), "utf8"),
       };

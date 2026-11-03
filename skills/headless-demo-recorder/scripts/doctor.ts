@@ -21,6 +21,8 @@ export function atLeast(text: string, min: string): boolean {
 
 // Versions this tool is tested against (README: 必要環境).
 const MIN = { "agent-browser": "0.41.0", "agent-desktop": "1.0.2" };
+/** The OpenScreen version the project format was verified against (render.ts); not a checked minimum. */
+const OPENSCREEN_VERIFIED = "2.2.0";
 
 export async function doctor(): Promise<Check[]> {
   const checks: Check[] = [];
@@ -31,7 +33,7 @@ export async function doctor(): Promise<Check[]> {
     ["ffprobe", "brew install ffmpeg"],
     ["agent-browser", "npm i -g agent-browser"],
     ["agent-desktop", "npm i -g agent-desktop"],
-    ["openscreen", "install OpenScreen 1.13+ and put its CLI on PATH"],
+    ["openscreen", `install OpenScreen (verified with ${OPENSCREEN_VERIFIED}) and put its CLI on PATH`],
   ] as const) {
     const path = await which(cmd);
     add({ name: cmd, ok: !!path, detail: path ?? "not found", fix: path ? undefined : fix });
@@ -62,7 +64,7 @@ export async function doctor(): Promise<Check[]> {
     // `help` prints usage without launching the editor window (`--version` would open the GUI).
     const h = await run("openscreen", ["help"], { timeoutMs: 30_000 }).catch(() => null);
     const ok = !!h && h.code === 0 && h.stdout.includes("openscreen export");
-    add({ name: "openscreen CLI", ok, detail: ok ? "export/record/captions available" : "help output not recognized", fix: ok ? undefined : "update OpenScreen to 1.13+" });
+    add({ name: "openscreen CLI", ok, detail: ok ? "export/record/captions available" : "help output not recognized", fix: ok ? undefined : `update OpenScreen (verified with ${OPENSCREEN_VERIFIED})` });
   }
   return checks;
 }

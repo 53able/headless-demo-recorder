@@ -1,0 +1,18 @@
+# 書式: <path|content> | <パターン> | <理由>
+# 一致した変更はマージ前に人が確認する。ローカルの編集・検査は妨げない。
+# 規則の削除・緩和も人が承認する。
+
+path | skills/headless-demo-recorder/scripts/appguard.ts | 操作対象アプリの制限
+path | skills/headless-demo-recorder/scripts/validate.ts | 入力検証・不可逆な操作の制限
+path | skills/headless-demo-recorder/scripts/exec.ts | 外部プロセスの実行
+path | skills/headless-demo-recorder/scripts/capture/* | 録画・実アプリ操作
+path | skills/headless-demo-recorder/scripts/session.ts | 録画セッション・実アプリ操作
+path | package.json | 依存関係・検査コマンド
+path | bun.lock | 依存関係
+path | .github/workflows/* | CI・必須検査
+path | AGENTS.md | エージェントの運用規則
+path | CLAUDE.md | エージェントの運用規則・参照
+path | docs/ains/human-review-rules | 本規則自体の変更
+content | DROP[[:space:]]+(TABLE|DATABASE|COLUMN)|TRUNCATE[[:space:]]|DELETE[[:space:]]+FROM | 破壊的なデータ操作
+content | (api[_-]?key|secret|password|token)[[:space:]]*[:=] | 秘密情報の混入疑い
+content | (eval|exec)\( | 動的実行

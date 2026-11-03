@@ -13,7 +13,7 @@
         "name": "すべて消去",
         "exact": true
       },
-      "caption": "クリア",
+      "caption": "0 から始める",
       "allowDestructive": true
     },
     {
@@ -23,7 +23,7 @@
         "name": "7",
         "exact": true
       },
-      "caption": "7"
+      "caption": "7+8 を計算"
     },
     {
       "action": "click",
@@ -31,8 +31,7 @@
         "role": "button",
         "name": "加算",
         "exact": true
-      },
-      "caption": "+"
+      }
     },
     {
       "action": "click",
@@ -40,8 +39,7 @@
         "role": "button",
         "name": "8",
         "exact": true
-      },
-      "caption": "8"
+      }
     },
     {
       "action": "click",
@@ -50,7 +48,7 @@
         "name": "計算実行",
         "exact": true
       },
-      "caption": "= 15",
+      "caption": "答えは 15",
       "waitMs": 1500
     }
   ],

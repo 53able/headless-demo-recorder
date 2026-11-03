@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { Composition } from "./types.ts";
 import { isComposition, validateComposition, validateEvents, validateScenario, validateStep } from "./validate.ts";
 
 const base = { name: "demo", source: { type: "browser", url: "https://example.com" }, output: { path: "out/demo.mp4" } };
@@ -171,4 +174,20 @@ test("edit.marker and edit.syntheticCursor must be boolean in a scenario and in 
 test("click/type events without a point warn that neither zoom nor marker will apply", () => {
   const w = validateEvents([{ tMs: 0, kind: "click" }, { tMs: 1, kind: "type", point: { cx: 0.5, cy: 0.5 } }, { tMs: 2, kind: "scroll" }]);
   expect(w.map((i) => [i.path, i.level])).toEqual([["events[0].point", "warning"]]);
+});
+
+/** The bundled examples are what agents copy; they must pass the same checks as their scenarios. */
+test("assets: every example passes validation", async () => {
+  const assets = join(import.meta.dir, "..", "assets");
+  const repo = join(import.meta.dir, "..", "..", ".."); // examples are written for the repository root as cwd
+  const read = async (p: string) => JSON.parse(await readFile(p, "utf8"));
+  const files = (await readdir(assets)).filter((n) => n.endsWith(".json"));
+  expect(files.length).toBeGreaterThan(0);
+  for (const n of files) {
+    const raw = await read(join(assets, n));
+    const issues = isComposition(raw)
+      ? validateComposition(raw, await Promise.all((raw as Composition).scenarios.map(async (p) => (await read(join(repo, p))).name)))
+      : validateScenario(raw);
+    expect({ n, errors: issues.filter((i) => i.level === "error") }).toEqual({ n, errors: [] });
+  }
 });
