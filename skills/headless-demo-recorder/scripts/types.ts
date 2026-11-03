@@ -135,6 +135,7 @@ export type SceneStream = { scenario: string; startMs?: number; endMs?: number }
 /** single: 1 stream; side-by-side: 2 (left, right). */
 export type Scene = { layout: "single" | "side-by-side"; streams: SceneStream[] };
 export type Composition = {
+  /** [A-Za-z0-9_.-]+. */
   name: string;
   /** 1 or 2 scenario JSON paths, relative to the current directory. */
   scenarios: string[];

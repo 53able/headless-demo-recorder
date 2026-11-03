@@ -20,7 +20,7 @@
 5. 返る `next` に従って `render <project-dir> --scenario <scenario> --force` を実行し、SKILL.md の作業ループ5〜6（`inspect` と目視確認）を行う。
 
 - 考えている時間もそのまま録画に入る。`edit.idleSpeedupMs`（例: 1500）で、操作のない区間を早送りする。
-- 手は1つずつ順に実行される。セッション内では `wait` の `ms` と各手の `waitMs` は 60000 まで。`session status` は手の実行中でも答える（`busy: true`）。
+- 手は1つずつ順に実行される。セッション内の `wait` の `ms` と各手の `waitMs` の上限は `scripts/types.ts` の `Step` の型コメントに従う。`session status` は手の実行中でも答える（`busy: true`）。
 - 最後の要求が終わってから `--idle-timeout` 秒（既定 600）が経つと、録画は自動で停止・保存される。手の実行中には止まらない。
 - `session status` が `failed` を返したら、返る `log`（サーバのログ）を読む。開始に失敗した場合（`SESSION_START_FAILED`、`retry: no`）は、アプリやブラウザの状態を確かめてから `session start --force` で始め直す。
 - 1つの project を録画できるのは1本だけ。録画中は、同じ project への `session start` / `capture` / `run` が `SESSION_ACTIVE` で止まる。

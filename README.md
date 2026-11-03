@@ -239,7 +239,7 @@ bun $S/scripts/cli.ts session stop out/s.project                    # 止めて�
 
 - `session start <scenario>` で録画を開いたままにする。`session observe` で画面のスナップショット（`--screenshot` で PNG）を見て、`session act '<step JSON>'` で1手ずつ進める。最後に `session stop` を実行し、あとは通常どおり `render` と `inspect` を行う。
 - 失敗した手（要素が見つからないなど）では録画は止まらず、その手はログから外れる。もう一度観察して、別の手を選べばよい。
-- 考えている時間も録画に入るので、`edit.idleSpeedupMs` で早送りする。手順の詳細はスキルの「録画中に画面を見ながら進める（session）」にある。
+- 考えている時間も録画に入るので、`edit.idleSpeedupMs` で早送りする。手順の詳細はスキルの `references/session.md`（「録画中に画面を見ながら進める（session）」）にある。
 
 ### 複数のエージェントに別々のアプリを操作させて録る
 > 「2つのエージェントに、それぞれ計算機とブラウザを同時に操作させて、左右に並べた動画にして」
