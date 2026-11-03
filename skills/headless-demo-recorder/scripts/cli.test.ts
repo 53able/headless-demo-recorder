@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "./exec.ts";
@@ -45,13 +45,20 @@ test("check: PROJECT_COLLISION in both directions", async () => {
   }
 });
 
-test("schema: the types, the guide and the examples, from any directory", async () => {
-  const r = JSON.parse((await run("bun", [cli, "schema"])).stdout) as { ok: boolean; guide: string; examples: string[]; types: string };
+test("schema: the types, the guide, the references and the examples, from any directory", async () => {
+  const r = JSON.parse((await run("bun", [cli, "schema"])).stdout) as { ok: boolean; guide: string; references: string[]; examples: string[]; note: string; types: string };
   expect(r.ok).toBe(true);
   expect(r.guide.endsWith("SKILL.md")).toBe(true);
   expect(r.types).toContain("export type Scenario");
   expect(r.types).toContain("export type Composition");
   expect(r.examples.some((p) => p.endsWith("composition-calc-wiki.json"))).toBe(true);
+  expect(typeof r.note).toBe("string");
+  // Every guide read on demand, by its real path, in name order; the set follows the directory.
+  const dir = join(import.meta.dir, "..", "references");
+  const want = (await readdir(dir)).filter((n) => n.endsWith(".md")).sort().map((n) => join(dir, n));
+  expect(want.length).toBeGreaterThan(0);
+  expect(r.references).toEqual(want);
+  for (const p of r.references) expect(await access(p).then(() => true, () => false)).toBe(true);
 });
 
 for (const failingSource of ["browser", "file"] as const) {
@@ -89,3 +96,13 @@ process.exit(args.includes("record") && args.includes("start") && args.includes(
     }
   });
 }
+
+/** The usage text is what an agent reads when a command is wrong; it must state the same facts as the guide. */
+test("usage: guards cover session start, run has a risk tier, schema lists the references, plan takes a scenario", async () => {
+  const r = await run("bun", [cli]);
+  const usage = r.stderr;
+  expect(usage).toMatch(/Guards \([^)]*session start[^)]*\)/);
+  expect(usage).toMatch(/^ {2}run +<scenario\.json> +R2 /m);
+  expect(usage).toMatch(/schema +R0 .*references/);
+  expect(usage).toMatch(/plan +<project-dir> \[--scenario s\.json\] \[--edit edit\.json\]/);
+});
