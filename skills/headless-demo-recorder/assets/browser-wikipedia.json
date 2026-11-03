@@ -18,13 +18,11 @@
       "action": "fill",
       "target": "#searchInput",
       "value": "Screen recording",
-      "caption": "知りたい語で検索する",
       "waitMs": 1200
     },
     {
       "action": "press",
       "key": "Enter",
-      "caption": "検索結果を開く",
       "waitMs": 2500
     },
     {

@@ -23,7 +23,7 @@
         "name": "7",
         "exact": true
       },
-      "caption": "1つ目の数を入れる"
+      "caption": "7 と 8 の合計を確かめる"
     },
     {
       "action": "click",
@@ -31,8 +31,7 @@
         "role": "button",
         "name": "加算",
         "exact": true
-      },
-      "caption": "足し算にする"
+      }
     },
     {
       "action": "click",
@@ -40,8 +39,7 @@
         "role": "button",
         "name": "8",
         "exact": true
-      },
-      "caption": "2つ目の数を入れる"
+      }
     },
     {
       "action": "click",
