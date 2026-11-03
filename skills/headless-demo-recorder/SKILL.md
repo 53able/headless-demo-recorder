@@ -136,7 +136,7 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
   - `tMs`（必須）: 動画上の時刻（ミリ秒）
   - `kind`（必須）: `click` / `type` / `press` / `scroll` / `navigate` / `wait` / `mark`
   - `point`: 操作した点 `{cx, cy}`（`{x, y}` ではない。ピクセル値ではなく比率）。`point` を持つ `click` / `type` がズームの中心になり、その要素にマーカーが重なる（マーカーの詳細は「マーカーとカーソル」）
-  - `rect`: 対象要素の矩形 `{x, y, w, h}`。ぼかし専用（`redact: true` と組で使う。`rect` の無い `redact` は効かない）
+  - `rect`: 対象要素の矩形 `{x, y, w, h}`。マーカーの位置と大きさ、`redact: true` のときのぼかし領域に使う。`rect` が無い `click` / `type` は `point` を中心に固定の大きさでマーカーを描き、`rect` の無い `redact` は効かない
   - `caption`（字幕の文字列）、`zoom`（false でそのイベントをズームしない）、`redact`
 - `check` は操作ログの形式も検証する。ログの中身（ラベルや座標）が動画に映っているものと合っているかは検証しないので、作業ループ5の目視確認で確かめる。
 
