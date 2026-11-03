@@ -35,8 +35,10 @@ export type RenderResult = {
   markers: number; trimRegions: number; speedRegions: number; timelineEdited: boolean;
 };
 
-/** Written next to the capture so `inspect` can report whether the export's timeline was edited. */
+/** Written next to the capture so `inspect` can report whether the export's timeline was edited.
+ * Only a successful export writes it, so its `timeline` is the one that video was rendered with. */
 export const RENDER_RECORD = "render.json";
+export type RenderRecord = RenderResult & { timeline: Pick<EditorPatch, "trimRegions" | "speedRegions"> };
 
 /** Write (or remove) `<video>.cursor.json`, which OpenScreen (verified with 2.2.0) auto-loads from next to the
  * video. A synthetic track left by an earlier render must go when this render wants no cursor;
@@ -139,6 +141,8 @@ export async function render(projDir: string, name: string, capture: CaptureResu
     projectPath, outputPath: outPath, durationMs: probe.durationMs, width: probe.width, height: probe.height, zooms: patch.zoomRegions.length, annotations: patch.annotationRegions.length,
     markers: burned, trimRegions: patch.trimRegions.length, speedRegions: patch.speedRegions.length, timelineEdited: patch.trimRegions.length + patch.speedRegions.length > 0,
   };
-  await writeFile(join(projDir, RENDER_RECORD), JSON.stringify(result, null, 2));
+  // The effective regions (after `style` overrides), as OpenScreen exported them.
+  const timeline = { trimRegions: project.editor.trimRegions, speedRegions: project.editor.speedRegions } as RenderRecord["timeline"];
+  await writeFile(join(projDir, RENDER_RECORD), JSON.stringify({ ...result, timeline } satisfies RenderRecord, null, 2));
   return result;
 }
