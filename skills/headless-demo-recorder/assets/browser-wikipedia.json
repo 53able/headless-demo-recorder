@@ -11,27 +11,27 @@
   "steps": [
     {
       "action": "mark",
-      "caption": "Wikipedia を開く",
+      "caption": "画面録画について調べる",
       "waitMs": 1200
     },
     {
       "action": "fill",
       "target": "#searchInput",
       "value": "Screen recording",
-      "caption": "検索ボックスにキーワードを入力",
+      "caption": "知りたい語で検索する",
       "waitMs": 1200
     },
     {
       "action": "press",
       "key": "Enter",
-      "caption": "検索を実行",
+      "caption": "検索結果を開く",
       "waitMs": 2500
     },
     {
       "action": "scroll",
       "direction": "down",
       "px": 600,
-      "caption": "記事をスクロール",
+      "caption": "用途の説明まで読み進める",
       "waitMs": 1500
     }
   ],

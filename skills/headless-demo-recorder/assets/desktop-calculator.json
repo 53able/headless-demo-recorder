@@ -13,7 +13,7 @@
         "name": "すべて消去",
         "exact": true
       },
-      "caption": "クリア",
+      "caption": "前の計算を消して 0 から始める",
       "allowDestructive": true
     },
     {
@@ -23,7 +23,7 @@
         "name": "7",
         "exact": true
       },
-      "caption": "7"
+      "caption": "1つ目の数を入れる"
     },
     {
       "action": "click",
@@ -32,7 +32,7 @@
         "name": "加算",
         "exact": true
       },
-      "caption": "+"
+      "caption": "足し算にする"
     },
     {
       "action": "click",
@@ -41,7 +41,7 @@
         "name": "8",
         "exact": true
       },
-      "caption": "8"
+      "caption": "2つ目の数を入れる"
     },
     {
       "action": "click",
@@ -50,7 +50,7 @@
         "name": "計算実行",
         "exact": true
       },
-      "caption": "= 15",
+      "caption": "合計 15 を確かめる",
       "waitMs": 1500
     }
   ],
