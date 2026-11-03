@@ -99,7 +99,8 @@ export async function render(projDir: string, name: string, capture: CaptureResu
   const { videoPath: video, burned } = await videoWithMarkers(projDir, capture, patch.markers);
   const wantCursor = await syncCursorSidecar({ ...capture, videoPath: video }, plan);
 
-  const { style, ...regions } = patch;
+  // markers are burned into the video above; OpenScreen gets only its own editor regions.
+  const { style, markers: _burned, ...regions } = patch;
   const isGif = outPath.endsWith(".gif");
   const project = {
     version: 2,
