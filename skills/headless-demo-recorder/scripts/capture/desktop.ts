@@ -72,8 +72,9 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
   }
   // Filtered: an unfiltered inventory fails as a whole when any other app's AX surface is unreadable.
   const wins = await ad<Win[]>("list-windows", "--app", app);
-  const win = wins.find((w) => w.app_name === app && w.visible && w.bounds.width > 0);
-  if (!win) throw new Error(`no visible window for app ${app}`);
+  // Input goes to the window the recorder records: `openscreen record --window` takes the first title containing it.
+  const win = wins.find((w) => w.app_name === app && w.visible && w.bounds.width > 0 && (!src.window || w.title.includes(src.window)));
+  if (!win) throw new Error(`no visible window for app ${app}${src.window ? ` with "${src.window}" in its title` : ""}`);
   /** Refuse unless the window's process is an allowed app. Called before every input. */
   const guard = async () => {
     const r = win.pid ? await run("lsappinfo", ["info", "-only", "bundleid", String(win.pid)], { timeoutMs: 10_000 }) : undefined;
