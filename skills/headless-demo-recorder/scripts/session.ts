@@ -135,13 +135,16 @@ export async function request(projDir: string, req: Request, timeoutMs: number):
     });
     sock.on("end", () => {
       clearTimeout(timer);
+      sock.end();
       try {
         resolve(JSON.parse(buf) as Record<string, unknown>);
       } catch {
         reject(new ToolError("capture", "SESSION_BAD_REPLY", `unreadable reply: ${buf.slice(0, 300)}`, "no", `see ${logPath(projDir)}`));
       }
     });
-    sock.end(JSON.stringify(req) + "\n");
+    // No half-close: under Bun 1.3, end(data) on a fresh unix socket loses the request and the reply.
+    // The server answers once it has the line, then ends the connection.
+    sock.write(JSON.stringify(req) + "\n");
   });
 }
 
@@ -237,7 +240,8 @@ async function serveInner(projDir: string, hooks: ServeHooks, sig: Sig): Promise
   } catch (e) {
     return abort("cannot prepare the session socket directory", e);
   }
-  // allowHalfOpen: the client ends its side after the request; the reply still has to go back.
+  // One newline-terminated request per connection; the reply ends it. allowHalfOpen keeps older
+  // clients that end their side after the request working.
   const server = createServer({ allowHalfOpen: true });
   let busy: Promise<unknown> = Promise.resolve();
   let acts = 0;
