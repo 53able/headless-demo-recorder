@@ -40,7 +40,9 @@ OpenScreen の `--auto-zoom` は、実際のマウスクリックを手がかり
 - macOS
 - Node.js 22.20 以上（スキルの導入に使う `npx skills` のため）
 - bun、ffmpeg
-- `agent-browser`（0.41）、`agent-desktop`（1.0.2）
+- `agent-browser`（0.41.0 以上。0.43.0 で確認）、`agent-desktop`（1.3.0 以上。1.3.1 で確認）
+  - 確認した版より新しいと、`doctor` は `ok` のまま `warnings` を返す。どちらも版によって挙動が変わるため。
+  - `doctor` は実行のたびに npm レジストリ（`registry.npmjs.org`）へ2つのツールの最新版を問い合わせ、確認した版や手元の版より新しい版が出ていれば `warnings` に出す。スキルの手順は作業の最初に必ず `doctor` を実行するので、スキルを使うたびに新しい版に気づける。オフラインのときは問い合わせを諦め、警告なしで続ける。版の数字の正本は `scripts/doctor.ts` の `TOOL_VERSIONS`。
 - OpenScreen（2.2.0 で確認済み。`openscreen` CLI に PATH が通っていること）
   - macOS で PATH に通すときは、シンボリックリンクではなく実体を `exec` するスクリプトを置く（例: `printf '#!/bin/sh\nunset ELECTRON_RUN_AS_NODE\nexec /Applications/Openscreen.app/Contents/MacOS/Openscreen "$@"\n'`）。シンボリックリンク経由だと `help` と `export` は動くが、`record` が `Renderer crashed` で失敗する（実測）。
 - デスクトップ録画には、ターミナルへの画面収録とアクセシビリティの権限付与が必要
@@ -91,7 +93,7 @@ headless-demo-recorder を、このマシンのどのプロジェクトからで
 - 同じく `schema` が `"ok": true` を返す
 
 ## 手順
-1. 前提を調べる（読み取りのみ）: macOS であること、Node.js（22.20 以上）・`bun`・`ffmpeg`・`agent-browser`（0.41 以上）・`agent-desktop`（1.0.2 以上）の有無と版、`/Applications/Openscreen.app` の有無と版（2.2.0 で確認済み）。足りないものを一覧にする。
+1. 前提を調べる（読み取りのみ）: macOS であること、Node.js（22.20 以上）・`bun`・`ffmpeg`・`agent-browser`（0.41.0 以上）・`agent-desktop`（1.3.0 以上）の有無と版、`/Applications/Openscreen.app` の有無と版（2.2.0 で確認済み）。足りないものを一覧にする。
 2. `npx skills add 53able/headless-demo-recorder -g -a claude-code -a codex -y` を実行する。
 3. PATH 上のユーザー用ディレクトリ（`~/.local/bin` が PATH にあればそこ。無ければ PATH にある書き込み可能なユーザー用ディレクトリ）に、`openscreen` というシェルスクリプトを置いて実行権限を付ける。中身は `unset ELECTRON_RUN_AS_NODE` のあと `exec /Applications/Openscreen.app/Contents/MacOS/Openscreen "$@"`。シンボリックリンクにはしない（`record` が失敗する）。
 4. `bun ~/.claude/skills/headless-demo-recorder/scripts/cli.ts doctor` と同じく `schema` を実行し、結果を報告する。
@@ -269,7 +271,16 @@ headless-demo-recorder session stop out/s.project                    # 止めて
 `check`、`capture`、`run`、`session start` は次のフラグを受け付ける。指定しなければ制限はかからない。
 
 - `--allow-origin <scheme://host:port>`（複数可）: シナリオ内の URL がすべて一致することを確認し、browser の通信先をこれらのホストに限る（agent-browser の `--allowed-domains`）。
-- `--allow-app <bundleId>`（複数可）: desktop の入力先をこれらのアプリに限る。スキルの `scripts/appguard.ts` の拒否リスト（Chrome、Safari、Edge、Firefox 系、Terminal.app、Finder、システム設定。前方一致）に当たるアプリは、指定の有無にかかわらず拒否する。それ以外のブラウザやターミナル（Brave、Arc、iTerm2 など）は拒否リストに無い。
+- `--allow-app <bundleId>`（複数可）: desktop の入力先をこれらのアプリに限る。スキルの `scripts/appguard.ts` の拒否リスト（Chrome、Safari、Edge、Firefox 系、Finder、システム設定。前方一致）に当たるアプリは、指定の有無にかかわらず拒否する。それ以外のブラウザやターミナル（Brave、Arc、iTerm2 など）は拒否リストに無い。
+  - Terminal.app（`com.apple.Terminal` で始まる ID）は、`--allow-app com.apple.Terminal` で明示したときだけ入力を許す。シェルへの入力はコマンドの実行になり、`check` の不可逆な操作の検証（対象の名前だけを見る）では止まらないためである。
+  - 明示したうえで、入力のたびに次を確かめ、満たさなければ `APP_NOT_ALLOWED` で止まる。目的は、録画していないウィンドウや、エージェント自身のシェルに入力しないことである。
+    - Terminal.app のウィンドウが録画中の1つだけであること。`press` のキーはアプリのキーウィンドウに届き、ウィンドウを選べないため。別の Space にあるウィンドウや最小化したウィンドウが一覧に出ない場合は検出できない。
+    - Terminal.app の端末（タブまたはウィンドウ。直下の子プロセスで数える）が1つだけであること。キーは前面のタブに届くので、同じウィンドウの別のタブ（別のエージェントなど）に入りうるため。別の Space のウィンドウや背面のタブも、ここで数えられる。
+    - 録画を始める時点で、その端末がシェルのプロンプトで待機していること（前面で別のプログラムが動いていない）。待機中のタブで別のエージェントや vim が動いていると、キーがそちらに入るため。そのタブの最上位のプロセスがシェル（zsh、bash、fish など）であることも確かめるので、`exec claude` やプロファイルの起動コマンドで動くプログラムも止まる。録画を始めた後は、デモの中で起動したプログラムへの入力を許す。そのため、録画の開始後に人や別の自動化がそのタブで起動したプログラムは検出できない。
+    - この CLI が Terminal.app の子孫プロセスとして動いていないこと（録画の開始前に1回確かめる）。プロセスの親をたどりきれないときも止まる。
+    - Terminal.app の配下で tmux、screen、zellij、ssh などが動いていないこと。別の場所で動くセッション（エージェント自身のものかもしれない）につながっている可能性があるため。
+    - `fill` の値に改行が無いこと。1回の入力で複数のコマンドを実行させないため。実行は `press return` で分けて行う。
+  - これらは誤ってキーが届くのを防ぐための検査で、サンドボックスではない。tmux などの検出はプロセス名で行うので、名前を変えた起動や一覧に無いツール（`tmux send-keys` を打つコマンドなど）は防げない。打つコマンドは事前に利用者が確かめる。
 
 > 警告: `--allow-origin http://127.0.0.1:<port>` を許可すると、実行中はポートを区別できないため、ページの JS から**そのホスト上の他のローカルサービス（管理画面など）にも届きうる**。
 
@@ -279,6 +290,7 @@ headless-demo-recorder session stop out/s.project                    # 止めて
 
 - OpenScreen のプロジェクト形式は、公開ドキュメントではなくアプリ内部のコードから読み取った（2.2.0 で確認）。今後の版で変わる可能性があるため、書き出しの前に毎回 `openscreen info` で検証している。
 - ブラウザ録画では、実時間を動画の長さに合わせて伸縮させ、操作の時刻を動画上へ対応付けている。ページの読み込みが止まると、ズームが ±200ms ほどずれることがある。
+- desktop の `press` は、アプリのキーウィンドウに届く（agent-desktop はキーの届くウィンドウを選べない。`--window-id` を付けると、背面のウィンドウには送らない）。録画中のウィンドウに届くと言えるのは、それがキーを受けうる唯一のウィンドウのときだけなので、ほかのウィンドウがあれば `WINDOW_NOT_SOLE` で止める。アクセシビリティの要素を持たず、録画中のウィンドウの内側に収まる小さな補助ウィンドウ（面積が 1/4 以下。計算機が操作中に出すものなど）は数えない。Terminal.app では補助ウィンドウも含めてすべて数える。`run` / `capture` では、シナリオに `press` があれば録画の開始前にこの条件を確かめる。
 - デスクトップ録画は1つのウィンドウしか録らない。別ウィンドウで開くダイアログ内の操作は、座標を正しく対応付けられない。1本の録画の中でアプリを切り替えることもできないので、複数のアプリはそれぞれ録画して composition で並べる。
 - ブラウザ録画は1つのタブだけを録る。新しいタブを開く操作は失敗として返る。扱いと回避の方法は `SKILL.md` の「操作の種類」。
 - ドラッグ、ホバー、座標指定のクリックには対応しない（理由は `SKILL.md` の「操作の種類」）。
@@ -286,8 +298,8 @@ headless-demo-recorder session stop out/s.project                    # 止めて
 - Whisper による字幕（`speechCaptions`）は、録画に音声が入っている場合しか使えない。ブラウザ録画には音声がない。
 - 1プロセスで同時に録画できるのは composition の2本まで。別プロセスの `run` の同時実行や、同じシナリオを参照する2つの composition の同時実行は、ロックが無いため project dir を壊しうる。
 - `openscreen record` は録画をアプリのフォルダ（macOS では `~/Library/Application Support/openscreen/recordings/`）に書く。desktop の capture は、録画が終わるとその動画・カーソル情報・session ファイルを project の `work/` に移す（`--keep-work` を付けなければ work ごと消える）。アプリの `media-links.registry.json` には参照が残るが、書き換えない。
-- desktop の録画は同時に2本録れる（`openscreen record --window` はウィンドウ単位で、重なっていても個別に録れる）。ヘッドレスの `fill` / `press` はアクセシビリティ API で対象要素に直接届くため、もう一方のアプリの操作や前面化で文字が欠けることはなかった（2026-11 実測: TextEdit への入力と計算機のクリック・前面化を同時に各3回、欠落なし）。
-- agent-browser（0.41.1 で確認）は `--allowed-domains` の指定時に `window.WebSocket` を差し替えるが、`WebSocket.OPEN` などの定数を引き継がない。`readyState === WebSocket.OPEN` を確かめてから送信するページ（ttyd など）は、何も送信できなくなる。`--allow-origin` を指定したときは、スキルの `scripts/capture/ws-constants.js` を初期化スクリプトとして差し込んで定数を補う。
+- desktop の録画は同時に2本録れる（`openscreen record --window` はウィンドウ単位で、重なっていても個別に録れる）。ヘッドレスの `fill` はアクセシビリティ API で対象要素に直接届き、`press` は対象アプリのプロセスに届くため、もう一方のアプリの操作や前面化で文字が欠けることはなかった（2026-11 実測: TextEdit への入力と計算機のクリック・前面化を同時に各3回、欠落なし）。
+- agent-browser は `--allowed-domains` の指定時に `window.WebSocket` を差し替えるが、`WebSocket.OPEN` などの定数を引き継がない（0.41.1〜0.43.0 で確認）。0.42.0 からは、ページの読み込みの後にもう一度差し替える。`readyState === WebSocket.OPEN` を確かめてから送信するページ（ttyd など）は、何も送信できなくなる。`--allow-origin` を指定したときは、スキルの `scripts/capture/ws-constants.js` を初期化スクリプトとして差し込み、後から差し替えられた `WebSocket` にも定数を補う。`tests/ws-constants.test.ts` が、読み込みの後に開いた WebSocket で送信できることを実物の agent-browser で確かめる。
 - 書き出しでは OpenScreen が余白と背景を付けるため、出力の解像度とフレームレートは入力と一致しない（[`references/file-source.md`](skills/headless-demo-recorder/references/file-source.md)）。
 
 ## 開発
@@ -322,4 +334,4 @@ kill %1
 - 端末の WebSocket は、`Origin` が `http://127.0.0.1:7681` の接続だけを受け付ける。書き込みできるシェルなので、普段のブラウザで開いている他のページからは操作できないようにしている。
 - 録画される端末は、利用者の設定ではなく `demo/howto/zdotdir/.zshrc` で起動する。プロンプトにユーザー名やホームのパスは出ず、履歴も保存しない。README と同じ関数 `headless-demo-recorder <cmd>`（`bun skills/headless-demo-recorder/scripts/cli.ts <cmd>`）を定義し、`npx skills` の利用状況の送信を止める。
 - 端末内のコマンドは、出力のパスを `out/` からの相対パスに直して表示する。絶対パスにはホームディレクトリが含まれるためである。`run` と `session` のコマンドは、進行ログの stderr を捨てる。
-- 標準の Terminal.app を agent-desktop で操作する方法は取らない。`skills/headless-demo-recorder/scripts/appguard.ts` の拒否リストが Terminal.app への入力を拒否するためである。
+- 標準の Terminal.app を agent-desktop で操作する方法は取らない。Terminal.app への入力は `--allow-app com.apple.Terminal` の明示が要り、利用者の実際のシェルでコマンドが動くためである。

@@ -26,6 +26,9 @@ export type SessionConfig = {
   group?: string;
   keepWork: boolean;
   idleTimeoutMs: number;
+  /** `session start` and its ancestors, for a desktop source: whether the agent runs inside the
+   * recorded app (see `DesktopOptions.launcherAncestors`). Absent: unknown. */
+  launcherAncestors?: number[];
 };
 export type Request =
   | { op: "status" }
@@ -132,13 +135,16 @@ export async function request(projDir: string, req: Request, timeoutMs: number):
     });
     sock.on("end", () => {
       clearTimeout(timer);
+      sock.end();
       try {
         resolve(JSON.parse(buf) as Record<string, unknown>);
       } catch {
         reject(new ToolError("capture", "SESSION_BAD_REPLY", `unreadable reply: ${buf.slice(0, 300)}`, "no", `see ${logPath(projDir)}`));
       }
     });
-    sock.end(JSON.stringify(req) + "\n");
+    // No half-close: under Bun 1.3, end(data) on a fresh unix socket loses the request and the reply.
+    // The server answers once it has the line, then ends the connection.
+    sock.write(JSON.stringify(req) + "\n");
   });
 }
 
@@ -147,6 +153,12 @@ export async function request(projDir: string, req: Request, timeoutMs: number):
 function inSession(e: unknown, hint: string): ToolError {
   const err = asToolError(e, "capture");
   if (err.code === "APP_NOT_ALLOWED") return err; // a guard refusal; fix --allow-app or the window, not the step
+  if (err.code === "WINDOW_NOT_SOLE") {
+    // Nothing was sent and the recording goes on: once the other windows are closed, the same step can run.
+    err.retry = "after-fix";
+    err.hint = "nothing was sent; ask the user to close the app's other windows (or, when the message says the windows could not be listed, run doctor), then session observe and send the same step again; click/fill on an element need no sole window";
+    return err;
+  }
   err.retry = "after-fix";
   err.hint = hint;
   return err;
@@ -234,7 +246,8 @@ async function serveInner(projDir: string, hooks: ServeHooks, sig: Sig): Promise
   } catch (e) {
     return abort("cannot prepare the session socket directory", e);
   }
-  // allowHalfOpen: the client ends its side after the request; the reply still has to go back.
+  // One newline-terminated request per connection; the reply ends it. allowHalfOpen keeps older
+  // clients that end their side after the request working.
   const server = createServer({ allowHalfOpen: true });
   let busy: Promise<unknown> = Promise.resolve();
   let acts = 0;

@@ -47,7 +47,7 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
    - 手順を事前に決め切れない（画面を見て次の操作を決める、複数のエージェントで同時に録る）: `references/session.md`
    - 録画済みの動画に編集を足す（file ソース）: `references/file-source.md`
    - 2本の録画を1本に並べる・つなぐ（composition）: `references/composition.md`
-1. `doctor` を実行する（Codex ではサンドボックス外で）。`ok:false` の項目があれば止めて、その `fix` を利用者に伝える。browser / desktop を録画する場合、権限が `granted` でなければ止めて、利用者に付与を依頼する。OS の設定やツールの導入を自分で行わない。file ソースだけを扱う場合、権限の項目は不要で、ツールの項目（ffmpeg、ffprobe、openscreen、openscreen CLI）が ok なら続けてよい。
+1. `doctor` を実行する（Codex ではサンドボックス外で）。`ok:false` の項目があれば止めて、その `fix` を利用者に伝える。browser / desktop を録画する場合、権限が `granted` でなければ止めて、利用者に付与を依頼する。OS の設定やツールの導入を自分で行わない。`warnings`（ツールがスキルの確認した版より新しい、プレリリース、または npm により新しい版が出ている）は止める理由にならない。新しい版が出ている旨の警告は、毎回そのまま利用者に伝える。ツールの更新は利用者が決める。利用者にツールと版を伝えて続け、手順5の確認は全コマで4点すべてを見る。版の違いによると思われる失敗が出たら、そのツールと版を添えて利用者に報告する。file ソースだけを扱う場合、権限の項目は不要で、ツールの項目（ffmpeg、ffprobe、openscreen、openscreen CLI）が ok なら続けてよい。
 2. **録画せずに下見する。** 先に、安定して指せる操作対象を見つける（file ソースでは不要）。
    - ブラウザ:
      1. `agent-browser --session explore open <url>` を実行し、続けて `agent-browser --session explore snapshot -i` を実行する。
@@ -78,10 +78,11 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
     - WebView のアプリ（Tauri / Pake / Electron など）では、`{ "role": "scrollarea" }` のような role だけのクエリが、ページ内の多数の要素に当たって失敗しやすい。`session observe` で得たスクロール領域の参照を使う。
     - WebKit のなめらかなスクロールは、操作の 350ms 後には終わっていないことがある。`inspectSheet` のスクロールのコマが途中の位置を映していても、録画の後半で行き着いているかを確かめる。
 - `press`（キー）、`wait`（ミリ秒）、`mark`（字幕だけ）はどちらでも使える。`open`（URL を開く）はブラウザ専用。
+  - desktop の `press` はアプリのキーウィンドウに届き、ウィンドウを選べない。そのため、キーを受けうるウィンドウが録画中の1つだけのときに限って送る。ほかのウィンドウがあれば `WINDOW_NOT_SOLE` で止まり、何も送らない。利用者にほかのウィンドウを閉じてもらうか、`click` / `fill` で要素を直接操作する。
 - ドラッグ、ホバー、座標指定のクリックは扱わない。agent-desktop ではこれらが `--headed`（物理入力）を要するため。
 - 1つの録画は1つのウィンドウ（desktop）または1つのページ（browser）だけを映す。複数のアプリを1本に入れるときは、アプリごとに録画して composition で並べる。
 - browser で新しいタブを開く手（`target="_blank"` のリンクなど）は録画されない。そのような手は、開いたタブを閉じて録画中のタブに戻したうえで、`NEW_TAB` を含むエラーで失敗する。遷移先は `open` で同じタブに開く。
-  - `--allow-origin` を指定していると、agent-browser 0.41.1 は新しいタブを開くクリックに応答を返さず、ページが `about:blank` になる（実測）。この状態からは戻せない。新しいタブを開くリンクは押さず、遷移先の URL を `open` で開く。セッションでこうなった場合は `session stop` して始め直す。
+  - `--allow-origin` を指定していると、新しいタブを開くクリックでページが `about:blank` になる（実測。agent-browser 0.41.1 は応答を返さず、0.43.0 は約10秒後に `Failed to install browser network controls` を返す）。この状態からは戻せない。新しいタブを開くリンクは押さず、遷移先の URL を `open` で開く。セッションでこうなった場合は `session stop` して始め直す。
 
 ## マーカーとカーソル
 
@@ -110,6 +111,8 @@ Codex で `doctor` の権限項目が `Operation not permitted`、または `ren
   - 確認したうえで無害なステップ（計算機の「すべて消去」など）は、**そのステップに** `"allowDestructive": true` を付ける。
   - シナリオ全体に付ける `allowDestructive` は、実際にその操作を行うデモに限る。必ず利用者の承認を得てから使う。
   - 判定は単語リストによる推定にすぎない。`check` を通過しても、そのステップが安全だとは保証されない。
+- Terminal.app への入力は `--allow-app com.apple.Terminal` を明示したときだけ通る。打ち込んだ文字はシェルでコマンドとして実行され、`check` はその中身を検査しない。使うのは利用者がターミナルの操作を頼んだときに限り、打つコマンドは事前に利用者に示す。
+  - 入力のたびに次を確かめ、満たさなければ `APP_NOT_ALLOWED` で止まる。Terminal.app のウィンドウが録画中の1つだけで、タブも1つだけであること。録画の開始時に、そのタブがシェルのプロンプトで待機していること。この CLI 自身が Terminal.app の中で動いていないこと。その配下で tmux・screen・ssh などが動いていないこと。`fill` の値に改行が無いこと（実行は `press return` で分ける）。ウィンドウや tmux を閉じるのは利用者に頼む。
 - agent-desktop はヘッドレスで動く。利用者が物理入力を許可しない限り、`--headed` を付けない。
 - デスクトップ録画は実際のウィンドウを録る。上に重なった通知も映り込む。
 - `openscreen` をサブコマンドなし、または `--version` 付きで実行しない。GUI が起動する。`doctor` は `openscreen help` を使う。
