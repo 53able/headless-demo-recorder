@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { copyFile, lstat, rename, rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { ancestorsOf, bundleRefusal, launcherRunsInside, optInRefusal, parseBundleId, parsePs, requiresOptIn, sharedSessionUnder, type ProcRow } from "../appguard.ts";
+import { ancestorsOf, bundleRefusal, launcherRunsInside, optInRefusal, parseBundleId, parsePs, requiresOptIn, keyWindowCandidates, foregroundUnder, sessionsUnder, sharedSessionUnder, soleWindowRefusal, type ProcRow } from "../appguard.ts";
 import { abortSignal, exists, ffprobe, log, parseNdjson, run, runOk, sleep, spawnEnv, toMp4 } from "../exec.ts";
 import { centerOf } from "../compile.ts";
 import type { ActionEvent, CaptureResult, DesktopSource, DesktopTarget, NRect, Step } from "../types.ts";
@@ -9,7 +9,7 @@ import { runSteps, stepWaitMs, type Driver } from "./driver.ts";
 
 type Env<T> = { ok: boolean; data: T; error?: { code: string; message: string; disposition?: { retry?: string } } };
 type Bounds = { x: number; y: number; width: number; height: number };
-type Win = { id: string; app_name: string; title: string; bounds: Bounds; visible: boolean; pid?: number };
+type Win = { id: string; app_name: string; title: string; bounds: Bounds; visible: boolean; accessible?: boolean; pid?: number };
 
 const move = (from: string, to: string) =>
   rename(from, to).catch(async (e: NodeJS.ErrnoException) => {
@@ -49,14 +49,19 @@ export type DesktopOptions = {
    * passes its launcher's, since it is reparented to launchd once `session start` exits; null means
    * unknown, which refuses opt-in apps. Omitted: this process's own ancestors. */
   launcherAncestors?: number[] | null;
+  /** The steps include a `press`: check its window condition before recording, not midway. */
+  pressAhead?: boolean;
   /** Awaited once the recorder runs; video before the moment it resolves is trimmed (see `t0EpochMs`). */
   ready?: () => Promise<void>;
 };
 
 async function processTable(): Promise<ProcRow[]> {
-  const r = await run("ps", ["-A", "-o", "pid=,ppid=,comm="], { timeoutMs: 10_000 });
+  const r = await run("ps", ["-A", "-o", "pid=,ppid=,stat=,comm="], { timeoutMs: 10_000 });
   if (r.code !== 0) throw new Error("APP_NOT_ALLOWED: cannot read the process table (fail closed)");
-  return parsePs(r.stdout);
+  // A dropped row would be a process nobody counts (a session, a foreground program): refuse instead.
+  const rows = parsePs(r.stdout);
+  if (rows.length !== r.stdout.split("\n").filter((l) => l.trim()).length) throw new Error("APP_NOT_ALLOWED: cannot parse the process table (fail closed)");
+  return rows;
 }
 
 /** This process and its ancestors, or undefined when they cannot be read. */
@@ -91,8 +96,17 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
   let cliRunsInside: boolean | undefined; // whether the launcher runs inside the app; fixed, checked once
   let checkedInside = false;
   let optIn = false;
-  /** Refuse unless the window's process is an allowed app. Called before every input. */
-  const guard = async () => {
+  /** The recorded process's windows (another instance of the app is not counted): every one for an
+   * opt-in app, else those that could hold the keyboard. Unreadable: refuse, nothing has been sent. */
+  const windowIdsOfApp = async (every: boolean) => {
+    const all = await ad<Win[]>("list-windows", "--app", app).catch((e: Error) => {
+      throw new Error(`WINDOW_NOT_SOLE: cannot list the windows of ${app} (fail closed): ${e.message}`);
+    });
+    return every ? all.filter((w) => w.pid === undefined || w.pid === win.pid).map((w) => w.id) : keyWindowCandidates(all, win.id, win.pid);
+  };
+  /** Refuse unless the window's process is an allowed app. Called before every input; `press`
+   * also needs the recorded window to be the app's only one (see `soleWindowRefusal`). */
+  const guard = async (o: { press?: boolean } = {}) => {
     const r = win.pid ? await run("lsappinfo", ["info", "-only", "bundleid", String(win.pid)], { timeoutMs: 10_000 }) : undefined;
     const bundleId = r?.code === 0 ? parseBundleId(r.stdout) : undefined;
     const why = bundleRefusal(bundleId, opts.allowApps?.length ? opts.allowApps : undefined);
@@ -100,17 +114,19 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
     optIn = !!bundleId && requiresOptIn(bundleId);
     if (optIn) {
       const rows = await processTable();
+      const atStart = !checkedInside;
       if (!checkedInside) {
         cliRunsInside = launcherRunsInside(opts.launcherAncestors, rows, process.pid, win.pid!);
         checkedInside = true;
       }
-      const all = await ad<Win[]>("list-windows", "--app", app);
-      const windowIds = all.filter((w) => w.pid === win.pid).map((w) => w.id);
-      const shell = optInRefusal(bundleId!, { windowIds, recordedId: win.id, cliRunsInside, sharedSession: sharedSessionUnder(rows, win.pid!) });
+      const shell = optInRefusal(bundleId!, { windowIds: await windowIdsOfApp(true), recordedId: win.id, cliRunsInside, sharedSession: sharedSessionUnder(rows, win.pid!), sessions: sessionsUnder(rows, win.pid!), foreground: atStart ? foregroundUnder(rows, win.pid!) : undefined });
       if (shell) throw new Error(`APP_NOT_ALLOWED: ${shell}`);
+    } else if (o.press) {
+      const why = soleWindowRefusal(app, await windowIdsOfApp(false), win.id);
+      if (why) throw new Error(`WINDOW_NOT_SOLE: ${why}`);
     }
   };
-  await guard(); // before the recorder starts
+  await guard({ press: opts.pressAhead }); // before the recorder starts
   const title = src.window ?? win.title;
   const wb = win.bounds;
   const norm = (b: Bounds): NRect => ({ x: (b.x - wb.x) / wb.width, y: (b.y - wb.y) / wb.height, w: b.width / wb.width, h: b.height / wb.height });
@@ -224,13 +240,14 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
         case "fill":
         case "select": {
           const { ref, rect, point } = await locate(step.target);
+          await guard();
+          // One fill must not run several commands: a command that opens a window would take the rest of the keys.
+          if (optIn && step.action === "fill" && /[\r\n]/.test(step.value)) throw new Error("APP_NOT_ALLOWED: a fill into a shell must not contain a newline; send it with a separate press return");
+          // Timed after the checks, right before the input, so markers and captions meet the action.
           events.push({
             tMs: now(), kind: step.action === "fill" ? "type" : "click", label: JSON.stringify(step.target), caption, rect,
             point, zoom: step.zoom, redact: step.redact,
           });
-          await guard();
-          // One fill must not run several commands: a command that opens a window would take the rest of the keys.
-          if (optIn && step.action === "fill" && /[\r\n]/.test(step.value)) throw new Error("APP_NOT_ALLOWED: a fill into a shell must not contain a newline; send it with a separate press return");
           if (step.action === "click") await ad("click", ref);
           else if (step.action === "fill") await ad("type", ref, step.value);
           else await ad("select", ref, step.value);
@@ -240,10 +257,10 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
           if (!step.target) throw new Error("desktop scroll needs a target element");
           const { ref, point } = await locate(step.target);
           // Scrolling is not worth a zoom or a marker; the point only moves the synthetic cursor (when enabled).
-          events.push({ tMs: now(), kind: "scroll", label: JSON.stringify(step.target), caption, point });
           await guard();
           const amount = Math.max(1, Math.round((step.px ?? 300) / 100));
           const before = await scrollbarValues();
+          events.push({ tMs: now(), kind: "scroll", label: JSON.stringify(step.target), caption, point });
           try {
             await ad("scroll", ref, "--direction", step.direction ?? "down", "--amount", String(amount));
           } catch (e) {
@@ -258,8 +275,11 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
           break;
         }
         case "press":
+          await guard({ press: true });
           events.push({ tMs: now(), kind: "press", label: step.key, caption });
-          await guard();
+          // Not --window-id: agent-desktop then sends keys only while that window is the active one,
+          // which a headless recording in the background never is (measured). The guard above makes the
+          // recorded window the app's only keyboard candidate; two instances of the app fail as AMBIGUOUS_TARGET.
           await ad("press", step.key, "--app", app);
           break;
         case "wait":
@@ -328,5 +348,5 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
 
 /** Record one app window with OpenScreen while agent-desktop drives it headlessly. */
 export async function captureDesktop(src: DesktopSource, steps: Step[], workDir: string, opts: DesktopOptions = {}): Promise<CaptureResult> {
-  return runSteps(await startDesktop(src, workDir, opts), steps);
+  return runSteps(await startDesktop(src, workDir, { ...opts, pressAhead: opts.pressAhead ?? steps.some((s) => s.action === "press") }), steps);
 }

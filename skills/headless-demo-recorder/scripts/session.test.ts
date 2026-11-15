@@ -108,10 +108,11 @@ import type { ActionEvent, Step } from "./types.ts";
 
 function fakeDriver() {
   const events: ActionEvent[] = [];
-  const f = { live: true, observed: false, closed: 0 };
+  const f = { live: true, observed: false, closed: 0, otherWindow: false };
   const labels: Record<string, string> = { "@e1": "button Go", "@e2": "button Delete account" };
   const d: Driver = {
     act: async (step: Step) => {
+      if (step.action === "press" && f.otherWindow) throw new Error("WINDOW_NOT_SOLE: App has 2 windows; keys go to its key window");
       if (step.action === "wait") await sleep(step.ms, false);
       f.observed = false; // like the real drivers: names from an observe are trusted only until the next input
       const ev: ActionEvent = { tMs: 0, kind: step.action === "wait" ? "wait" : "click", label: "target" in step ? String(step.target) : undefined };
@@ -182,6 +183,24 @@ test("serve: refs must come from the latest observe and are checked by name; sta
     expect(await readState(s.projDir)).toMatchObject({ status: "stopped", reason: "the recorder exited" });
     expect(s.saved).toHaveLength(1);
     expect(s.events.map((e) => e.label)).toEqual(["@e2", "@e1", "@e1", undefined]);
+  } finally {
+    await rm(s.projDir, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test("serve: a press refused for another window sends nothing and can be sent again once it is closed", async () => {
+  const s = await startServe(5000);
+  try {
+    s.f.otherWindow = true;
+    const refused = await request(s.projDir, { op: "act", step: { action: "press", key: "return" } }, 10_000);
+    expect(refused).toMatchObject({ ok: false, code: "WINDOW_NOT_SOLE", retry: "after-fix" });
+    expect(String(refused.hint)).toContain("send the same step again");
+    expect(String(refused.hint)).not.toContain("capture --force");
+    expect(s.events).toHaveLength(0);
+    s.f.otherWindow = false;
+    expect(await request(s.projDir, { op: "act", step: { action: "press", key: "return" } }, 10_000)).toMatchObject({ ok: true });
+    expect(s.events).toHaveLength(1);
+    expect(await request(s.projDir, { op: "stop" }, 10_000)).toMatchObject({ ok: true });
   } finally {
     await rm(s.projDir, { recursive: true, force: true });
   }

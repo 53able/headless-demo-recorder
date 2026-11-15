@@ -28,12 +28,17 @@ export function asToolError(e: unknown, stage: Stage, artifacts?: Record<string,
     return e;
   }
   const message = e instanceof Error ? e.message : String(e);
+  // Guard refusals first: their messages may quote an agent-desktop error (AMBIGUOUS_TARGET, ...).
+  if (stage === "capture" && message.startsWith("APP_NOT_ALLOWED:")) {
+    return new ToolError(stage, "APP_NOT_ALLOWED", message, "no", "the target window is not an allowed app; check --allow-app and the window the scenario resolves to (Terminal.app also needs to be named in --allow-app, have only the recorded window and tab open, wait at a shell prompt when recording starts, run no tmux/screen/ssh, not be the app running this CLI, and get no newline in a fill)", artifacts);
+  }
+  if (stage === "capture" && message.startsWith("WINDOW_NOT_SOLE:")) {
+    return new ToolError(stage, "WINDOW_NOT_SOLE", message, "no",
+      "press reaches the app's key window, which is known to be the recorded one only when the app has no other window: ask the user to close the others (or use click/fill on an element), then capture --force", artifacts);
+  }
   if (stage === "capture" && /Element not found|no element for|STALE_REF|AMBIGUOUS_TARGET/.test(message)) {
     return new ToolError(stage, "TARGET_NOT_FOUND", message, "no",
       "earlier steps already ran in the app; reset its state, re-explore the UI at that step (snapshot), fix the target, then capture --force", artifacts);
-  }
-  if (stage === "capture" && message.startsWith("APP_NOT_ALLOWED:")) {
-    return new ToolError(stage, "APP_NOT_ALLOWED", message, "no", "the target window is not an allowed app; check --allow-app and the window the scenario resolves to (Terminal.app also needs to be named in --allow-app, have only the recorded window open, run no tmux/screen/ssh, not be the app running this CLI, and get no newline in a fill)", artifacts);
   }
   // Capture failures can leave the app half-operated: never mark them safe.
   const retry: Retry = stage === "capture" ? "no" : "after-fix";

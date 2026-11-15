@@ -39,15 +39,18 @@ export function bundleRefusal(bundleId: string | undefined, allowApps?: string[]
  * own, say) that does not run under the recorded app. Matched against the executable's base name. */
 export const SHARED_SESSION_CLIENTS = ["tmux", "screen", "zellij", "byobu", "abduco", "dtach", "ssh", "mosh-client", "et"];
 
-export type ProcRow = { pid: number; ppid: number; comm: string };
+/** `stat` holds "+" for a process in its terminal's foreground process group. */
+export type ProcRow = { pid: number; ppid: number; stat: string; comm: string };
 
-/** Rows of `ps -A -o pid=,ppid=,comm=` (comm may contain spaces). */
+/** Rows of `ps -A -o pid=,ppid=,stat=,comm=` (comm may contain spaces). */
 export function parsePs(out: string): ProcRow[] {
   return out.split("\n").flatMap((line) => {
-    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/);
-    return m ? [{ pid: Number(m[1]), ppid: Number(m[2]), comm: m[3]! }] : [];
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/);
+    return m ? [{ pid: Number(m[1]), ppid: Number(m[2]), stat: m[3]!, comm: m[4]! }] : [];
   });
 }
+
+const baseName = (comm: string) => comm.split("/").pop()!.replace(/^-/, "").split(" ")[0]!;
 
 /** `pid` and its ancestors up to launchd; undefined when the walk cannot finish (a process missing
  * from the table, or a cycle), which callers treat as "may run inside anything". */
@@ -72,6 +75,31 @@ export function launcherRunsInside(given: number[] | null | undefined, rows: Pro
   return chain?.includes(appPid);
 }
 
+/** Processes started directly by the app: a terminal app starts one (`login`, or the shell) per tab or
+ * window. Windows on another Space and background tabs are missing from the window list but not here. */
+export const sessionsUnder = (rows: ProcRow[], root: number) => rows.filter((r) => r.ppid === root).length;
+
+/** Shells a terminal session may start in. Anything else at the top of a session is refused. */
+export const SHELLS = ["zsh", "bash", "sh", "dash", "ksh", "mksh", "tcsh", "csh", "fish", "nu", "xonsh"];
+
+/** What keeps a terminal app's session from waiting at a shell prompt, if anything: the program at the
+ * top of a session (a child of `root`, or of its `login`) when it is not a shell (`exec claude`, a
+ * profile's startup command, "New Command"), or a foreground ("+") process under `root` other than
+ * that shell. Measured: an idle shell is "S+"; while it runs a command the shell is "S" and the command "S+". */
+export function foregroundUnder(rows: ProcRow[], root: number): string | undefined {
+  const byPid = new Map(rows.map((r) => [r.pid, r]));
+  const under = (r: ProcRow): boolean => {
+    for (let p = r.ppid, i = 0; i < 256 && p > 1; p = byPid.get(p)?.ppid ?? 0, i++) if (p === root) return true;
+    return false;
+  };
+  const isLogin = (r: ProcRow | undefined) => !!r && r.ppid === root && baseName(r.comm) === "login";
+  const tops = rows.filter((r) => (r.ppid === root && !isLogin(r)) || isLogin(byPid.get(r.ppid)));
+  const notShell = tops.find((r) => !SHELLS.includes(baseName(r.comm)));
+  if (notShell) return baseName(notShell.comm);
+  const busy = rows.find((r) => r.stat.includes("+") && under(r) && !tops.includes(r) && !isLogin(r));
+  return busy && baseName(busy.comm);
+}
+
 /** The first shared-session client running under `root`, if any. */
 export function sharedSessionUnder(rows: ProcRow[], root: number): string | undefined {
   const kids = new Map<number, ProcRow[]>();
@@ -82,7 +110,7 @@ export function sharedSessionUnder(rows: ProcRow[], root: number): string | unde
     const r = queue.shift()!;
     if (seen.has(r.pid)) continue;
     seen.add(r.pid);
-    const name = r.comm.split("/").pop()!.replace(/^-/, "").split(" ")[0]!;
+    const name = baseName(r.comm);
     if (SHARED_SESSION_CLIENTS.includes(name)) return name;
     queue.push(...(kids.get(r.pid) ?? []));
   }
@@ -92,16 +120,49 @@ export function sharedSessionUnder(rows: ProcRow[], root: number): string | unde
 /** Extra conditions for an opt-in app (a shell), or undefined when they hold. `press` reaches the
  * app's key window, not a chosen one, so the recorded window must be the app's only window. The
  * agent's own shell must be out of reach: this CLI must not run inside the app (undefined: unknown,
- * so refused), and no tmux/ssh-like client may run in it, since it could be attached to the agent's session. */
-export function optInRefusal(bundleId: string, o: { windowIds: string[]; recordedId: string; cliRunsInside: boolean | undefined; sharedSession?: string }): string | undefined {
+ * so refused), no tmux/ssh-like client may run in it, since it could be attached to the agent's session,
+ * and it must run one terminal session only (`sessionsUnder`): tabs share a window. */
+export function optInRefusal(bundleId: string, o: { windowIds: string[]; recordedId: string; cliRunsInside: boolean | undefined; sharedSession?: string; sessions?: number; foreground?: string }): string | undefined {
   if (o.cliRunsInside !== false) {
     return o.cliRunsInside ? `this CLI runs inside ${bundleId}; run the agent from another app to record it`
       : `cannot tell whether this CLI runs inside ${bundleId} (fail closed)`;
   }
   if (o.sharedSession) return `${o.sharedSession} runs inside ${bundleId}; it may carry another session (the agent's own), so quit it first`;
-  if (!o.windowIds.includes(o.recordedId)) return `the recorded window of ${bundleId} is gone`;
-  if (o.windowIds.length !== 1) {
-    return `${bundleId} has ${o.windowIds.length} windows; keys could reach one that is not recorded, so close all but the recorded window`;
+  // Before recording: the session must wait at its shell prompt, not run a program (another agent, say)
+  // that would take the keys. Later inputs may drive what the demo itself started.
+  if (o.foreground) return `${bundleId} is running ${o.foreground} in the foreground; ask the user to return it to an idle shell prompt before recording`;
+  // Keys go to the front tab of the key window: another tab (the agent, another agent) could take them.
+  if (o.sessions !== undefined && o.sessions !== 1) {
+    return `${bundleId} runs ${o.sessions} terminal sessions (tabs or windows); keys could reach one that is not recorded, so keep only the recorded one`;
+  }
+  return soleWindowRefusal(bundleId, o.windowIds, o.recordedId);
+}
+
+export type WindowInfo = { id: string; pid?: number; visible: boolean; accessible?: boolean; bounds: { x: number; y: number; width: number; height: number } };
+
+/** Windows of the recorded process that could hold the keyboard. A small overlay drawn inside the
+ * recorded window with no accessibility element (a tooltip-like panel Calculator shows while it is
+ * operated, measured) cannot, so it is left out: visible, `accessible: false`, inside the recorded
+ * window's current bounds, at most a quarter of its area. Hidden windows and windows elsewhere still
+ * count; so do windows whose pid is unknown, unless they are such an overlay. Opt-in apps (shells) do not use this: they count every window. */
+export function keyWindowCandidates(windows: WindowInfo[], recordedId: string, pid: number | undefined): string[] {
+  const own = windows.filter((w) => w.pid === undefined || w.pid === pid);
+  const r = own.find((w) => w.id === recordedId)?.bounds;
+  if (!r) return own.map((w) => w.id); // the recorded window is gone: exclude nothing
+  const overlay = (w: WindowInfo) => {
+    const b = w.bounds;
+    const inside = b.x >= r.x && b.y >= r.y && b.x + b.width <= r.x + r.width && b.y + b.height <= r.y + r.height;
+    return w.visible && w.accessible === false && inside && b.width * b.height <= (r.width * r.height) / 4;
+  };
+  return own.filter((w) => w.id === recordedId || !overlay(w)).map((w) => w.id);
+}
+
+/** `press` sends keys to the app's key window, which agent-desktop cannot name or choose: they are
+ * known to reach the recorded window only while it is the app's only window. Undefined when it is. */
+export function soleWindowRefusal(app: string, windowIds: string[], recordedId: string): string | undefined {
+  if (!windowIds.includes(recordedId)) return `the recorded window of ${app} is gone`;
+  if (windowIds.length !== 1) {
+    return `${app} has ${windowIds.length} windows; keys go to its key window, which may not be the recorded one, so close all but the recorded window`;
   }
   return undefined;
 }

@@ -153,6 +153,12 @@ export async function request(projDir: string, req: Request, timeoutMs: number):
 function inSession(e: unknown, hint: string): ToolError {
   const err = asToolError(e, "capture");
   if (err.code === "APP_NOT_ALLOWED") return err; // a guard refusal; fix --allow-app or the window, not the step
+  if (err.code === "WINDOW_NOT_SOLE") {
+    // Nothing was sent and the recording goes on: once the other windows are closed, the same step can run.
+    err.retry = "after-fix";
+    err.hint = "nothing was sent; ask the user to close the app's other windows (or, when the message says the windows could not be listed, run doctor), then session observe and send the same step again; click/fill on an element need no sole window";
+    return err;
+  }
   err.retry = "after-fix";
   err.hint = hint;
   return err;
