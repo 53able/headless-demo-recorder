@@ -446,7 +446,8 @@ async function main(argv: string[]): Promise<unknown> {
     }
     case "doctor": {
       const checks = await doctor();
-      return { ok: checks.every((c) => c.ok), checks };
+      const warnings = checks.flatMap((c) => (c.warning ? [c.warning] : []));
+      return { ok: checks.every((c) => c.ok), checks, ...(warnings.length ? { warnings } : {}) };
     }
     case "schema": {
       // The types are the schema: print them as they are, so the answer never drifts from the code.

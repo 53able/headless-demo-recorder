@@ -64,7 +64,7 @@ function urlChecker(opts: ValidateOptions, err: ErrFn, reportBadOrigins = true) 
 
 const STEP_ACTIONS = ["click", "fill", "select", "press", "scroll", "open", "wait", "mark"];
 const SCROLL_DIRECTIONS = ["up", "down", "left", "right"];
-/** agent-browser resolves all of these as snapshot refs (verified on 0.41.1): "@e3", "ref=e3", "e3". */
+/** agent-browser resolves all of these as snapshot refs (verified on 0.41.1 and 0.43.0): "@e3", "ref=e3", "e3". */
 const BROWSER_REF = /^(?:@|ref=)?e(\d+)$/;
 /** The canonical "@eN" key for a browser ref, or undefined if the string is a selector. */
 export function browserRefKey(target: string): string | undefined {

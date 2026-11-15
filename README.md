@@ -40,7 +40,9 @@ OpenScreen の `--auto-zoom` は、実際のマウスクリックを手がかり
 - macOS
 - Node.js 22.20 以上（スキルの導入に使う `npx skills` のため）
 - bun、ffmpeg
-- `agent-browser`（0.41）、`agent-desktop`（1.0.2）
+- `agent-browser`（0.41.0 以上。0.43.0 で確認）、`agent-desktop`（1.3.0 以上。1.3.1 で確認）
+  - 確認した版より新しいと、`doctor` は `ok` のまま `warnings` を返す。どちらも版によって挙動が変わるため。
+  - `doctor` は実行のたびに npm レジストリ（`registry.npmjs.org`）へ2つのツールの最新版を問い合わせ、確認した版や手元の版より新しい版が出ていれば `warnings` に出す。スキルの手順は作業の最初に必ず `doctor` を実行するので、スキルを使うたびに新しい版に気づける。オフラインのときは問い合わせを諦め、警告なしで続ける。版の数字の正本は `scripts/doctor.ts` の `TOOL_VERSIONS`。
 - OpenScreen（2.2.0 で確認済み。`openscreen` CLI に PATH が通っていること）
   - macOS で PATH に通すときは、シンボリックリンクではなく実体を `exec` するスクリプトを置く（例: `printf '#!/bin/sh\nunset ELECTRON_RUN_AS_NODE\nexec /Applications/Openscreen.app/Contents/MacOS/Openscreen "$@"\n'`）。シンボリックリンク経由だと `help` と `export` は動くが、`record` が `Renderer crashed` で失敗する（実測）。
 - デスクトップ録画には、ターミナルへの画面収録とアクセシビリティの権限付与が必要
@@ -91,7 +93,7 @@ headless-demo-recorder を、このマシンのどのプロジェクトからで
 - 同じく `schema` が `"ok": true` を返す
 
 ## 手順
-1. 前提を調べる（読み取りのみ）: macOS であること、Node.js（22.20 以上）・`bun`・`ffmpeg`・`agent-browser`（0.41 以上）・`agent-desktop`（1.0.2 以上）の有無と版、`/Applications/Openscreen.app` の有無と版（2.2.0 で確認済み）。足りないものを一覧にする。
+1. 前提を調べる（読み取りのみ）: macOS であること、Node.js（22.20 以上）・`bun`・`ffmpeg`・`agent-browser`（0.41.0 以上）・`agent-desktop`（1.3.0 以上）の有無と版、`/Applications/Openscreen.app` の有無と版（2.2.0 で確認済み）。足りないものを一覧にする。
 2. `npx skills add 53able/headless-demo-recorder -g -a claude-code -a codex -y` を実行する。
 3. PATH 上のユーザー用ディレクトリ（`~/.local/bin` が PATH にあればそこ。無ければ PATH にある書き込み可能なユーザー用ディレクトリ）に、`openscreen` というシェルスクリプトを置いて実行権限を付ける。中身は `unset ELECTRON_RUN_AS_NODE` のあと `exec /Applications/Openscreen.app/Contents/MacOS/Openscreen "$@"`。シンボリックリンクにはしない（`record` が失敗する）。
 4. `bun ~/.claude/skills/headless-demo-recorder/scripts/cli.ts doctor` と同じく `schema` を実行し、結果を報告する。

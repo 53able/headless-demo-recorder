@@ -47,7 +47,7 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
    - 手順を事前に決め切れない（画面を見て次の操作を決める、複数のエージェントで同時に録る）: `references/session.md`
    - 録画済みの動画に編集を足す（file ソース）: `references/file-source.md`
    - 2本の録画を1本に並べる・つなぐ（composition）: `references/composition.md`
-1. `doctor` を実行する（Codex ではサンドボックス外で）。`ok:false` の項目があれば止めて、その `fix` を利用者に伝える。browser / desktop を録画する場合、権限が `granted` でなければ止めて、利用者に付与を依頼する。OS の設定やツールの導入を自分で行わない。file ソースだけを扱う場合、権限の項目は不要で、ツールの項目（ffmpeg、ffprobe、openscreen、openscreen CLI）が ok なら続けてよい。
+1. `doctor` を実行する（Codex ではサンドボックス外で）。`ok:false` の項目があれば止めて、その `fix` を利用者に伝える。browser / desktop を録画する場合、権限が `granted` でなければ止めて、利用者に付与を依頼する。OS の設定やツールの導入を自分で行わない。`warnings`（ツールがスキルの確認した版より新しい、プレリリース、または npm により新しい版が出ている）は止める理由にならない。新しい版が出ている旨の警告は、毎回そのまま利用者に伝える。ツールの更新は利用者が決める。利用者にツールと版を伝えて続け、手順5の確認は全コマで4点すべてを見る。版の違いによると思われる失敗が出たら、そのツールと版を添えて利用者に報告する。file ソースだけを扱う場合、権限の項目は不要で、ツールの項目（ffmpeg、ffprobe、openscreen、openscreen CLI）が ok なら続けてよい。
 2. **録画せずに下見する。** 先に、安定して指せる操作対象を見つける（file ソースでは不要）。
    - ブラウザ:
      1. `agent-browser --session explore open <url>` を実行し、続けて `agent-browser --session explore snapshot -i` を実行する。
@@ -82,7 +82,7 @@ description: ブラウザや macOS アプリをヘッドレスで操作しなが
 - ドラッグ、ホバー、座標指定のクリックは扱わない。agent-desktop ではこれらが `--headed`（物理入力）を要するため。
 - 1つの録画は1つのウィンドウ（desktop）または1つのページ（browser）だけを映す。複数のアプリを1本に入れるときは、アプリごとに録画して composition で並べる。
 - browser で新しいタブを開く手（`target="_blank"` のリンクなど）は録画されない。そのような手は、開いたタブを閉じて録画中のタブに戻したうえで、`NEW_TAB` を含むエラーで失敗する。遷移先は `open` で同じタブに開く。
-  - `--allow-origin` を指定していると、agent-browser 0.41.1 は新しいタブを開くクリックに応答を返さず、ページが `about:blank` になる（実測）。この状態からは戻せない。新しいタブを開くリンクは押さず、遷移先の URL を `open` で開く。セッションでこうなった場合は `session stop` して始め直す。
+  - `--allow-origin` を指定していると、新しいタブを開くクリックでページが `about:blank` になる（実測。agent-browser 0.41.1 は応答を返さず、0.43.0 は約10秒後に `Failed to install browser network controls` を返す）。この状態からは戻せない。新しいタブを開くリンクは押さず、遷移先の URL を `open` で開く。セッションでこうなった場合は `session stop` して始め直す。
 
 ## マーカーとカーソル
 
