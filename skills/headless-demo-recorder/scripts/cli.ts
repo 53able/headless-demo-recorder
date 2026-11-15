@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promise
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureBrowser, startBrowser } from "./capture/browser.ts";
-import { captureDesktop, startDesktop } from "./capture/desktop.ts";
+import { captureDesktop, processAncestors, startDesktop } from "./capture/desktop.ts";
 import { actLogged, type Driver } from "./capture/driver.ts";
 import { captureFile } from "./capture/file.ts";
 import { compileEditor } from "./compile.ts";
@@ -51,7 +51,7 @@ Flags: --force (overwrite an existing capture/output), --keep-work (keep raw cap
 Guards (check/capture/run/session start):
   --allow-origin <origin>   repeatable; every URL must match scheme+host+port; the browser is
                             limited to these hosts (agent-browser --allowed-domains)
-  --allow-app <bundleId>    repeatable; desktop input only to these apps (deny list always applies)
+  --allow-app <bundleId>    repeatable; desktop input only to these apps (deny list always applies; Terminal.app only when named)
   --session-name <name>     agent-browser session to use (default: generated); a composition
                             uses <name>-<scenario name> for each browser scenario
 stdout: exactly one JSON object. ok:false carries stage, code, retry (safe | after-fix | no), hint.
@@ -251,6 +251,7 @@ async function sessionCommand(f: Flags): Promise<unknown> {
       scenarioPath: resolve(target), scenario, cwd: process.cwd(),
       allowOrigins: f.allowOrigins, allowApps: f.allowApps, sessionName: f.opts["session-name"],
       group: f.opts.group, keepWork: f.keepWork, idleTimeoutMs: idle * 1000,
+      ...(scenario.source.type === "desktop" ? { launcherAncestors: await processAncestors() } : {}),
     };
     const state = await launchServer(projDir, config, CLI_PATH);
     if (state.status === "failed") return state.error;
@@ -297,7 +298,7 @@ function serveSession(projDir: string) {
     const d = src.type === "browser"
       ? await startBrowser(src, work, { allowOrigins: c.allowOrigins, sessionName: c.sessionName ?? `headless-demo-recorder-session-${c.scenario.name}-${process.pid}` })
       : src.type === "desktop"
-        ? await startDesktop(src, work, { allowApps: c.allowApps })
+        ? await startDesktop(src, work, { allowApps: c.allowApps, launcherAncestors: c.launcherAncestors ?? null })
         : (() => { throw new Error("a session needs a browser or desktop source"); })();
     try {
       const steps = c.scenario.steps ?? [];

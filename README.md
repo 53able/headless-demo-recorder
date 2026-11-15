@@ -269,7 +269,14 @@ headless-demo-recorder session stop out/s.project                    # 止めて
 `check`、`capture`、`run`、`session start` は次のフラグを受け付ける。指定しなければ制限はかからない。
 
 - `--allow-origin <scheme://host:port>`（複数可）: シナリオ内の URL がすべて一致することを確認し、browser の通信先をこれらのホストに限る（agent-browser の `--allowed-domains`）。
-- `--allow-app <bundleId>`（複数可）: desktop の入力先をこれらのアプリに限る。スキルの `scripts/appguard.ts` の拒否リスト（Chrome、Safari、Edge、Firefox 系、Terminal.app、Finder、システム設定。前方一致）に当たるアプリは、指定の有無にかかわらず拒否する。それ以外のブラウザやターミナル（Brave、Arc、iTerm2 など）は拒否リストに無い。
+- `--allow-app <bundleId>`（複数可）: desktop の入力先をこれらのアプリに限る。スキルの `scripts/appguard.ts` の拒否リスト（Chrome、Safari、Edge、Firefox 系、Finder、システム設定。前方一致）に当たるアプリは、指定の有無にかかわらず拒否する。それ以外のブラウザやターミナル（Brave、Arc、iTerm2 など）は拒否リストに無い。
+  - Terminal.app（`com.apple.Terminal` で始まる ID）は、`--allow-app com.apple.Terminal` で明示したときだけ入力を許す。シェルへの入力はコマンドの実行になり、`check` の不可逆な操作の検証（対象の名前だけを見る）では止まらないためである。
+  - 明示したうえで、入力のたびに次を確かめ、満たさなければ `APP_NOT_ALLOWED` で止まる。目的は、録画していないウィンドウや、エージェント自身のシェルに入力しないことである。
+    - Terminal.app のウィンドウが録画中の1つだけであること。`press` のキーはアプリのキーウィンドウに届き、ウィンドウを選べないため。別の Space にあるウィンドウや最小化したウィンドウが一覧に出ない場合は検出できない。
+    - この CLI が Terminal.app の子孫プロセスとして動いていないこと（録画の開始前に1回確かめる）。プロセスの親をたどりきれないときも止まる。
+    - Terminal.app の配下で tmux、screen、zellij、ssh などが動いていないこと。別の場所で動くセッション（エージェント自身のものかもしれない）につながっている可能性があるため。
+    - `fill` の値に改行が無いこと。1回の入力で複数のコマンドを実行させないため。実行は `press return` で分けて行う。
+  - これらは誤ってキーが届くのを防ぐための検査で、サンドボックスではない。tmux などの検出はプロセス名で行うので、名前を変えた起動や一覧に無いツール（`tmux send-keys` を打つコマンドなど）は防げない。打つコマンドは事前に利用者が確かめる。
 
 > 警告: `--allow-origin http://127.0.0.1:<port>` を許可すると、実行中はポートを区別できないため、ページの JS から**そのホスト上の他のローカルサービス（管理画面など）にも届きうる**。
 
@@ -322,4 +329,4 @@ kill %1
 - 端末の WebSocket は、`Origin` が `http://127.0.0.1:7681` の接続だけを受け付ける。書き込みできるシェルなので、普段のブラウザで開いている他のページからは操作できないようにしている。
 - 録画される端末は、利用者の設定ではなく `demo/howto/zdotdir/.zshrc` で起動する。プロンプトにユーザー名やホームのパスは出ず、履歴も保存しない。README と同じ関数 `headless-demo-recorder <cmd>`（`bun skills/headless-demo-recorder/scripts/cli.ts <cmd>`）を定義し、`npx skills` の利用状況の送信を止める。
 - 端末内のコマンドは、出力のパスを `out/` からの相対パスに直して表示する。絶対パスにはホームディレクトリが含まれるためである。`run` と `session` のコマンドは、進行ログの stderr を捨てる。
-- 標準の Terminal.app を agent-desktop で操作する方法は取らない。`skills/headless-demo-recorder/scripts/appguard.ts` の拒否リストが Terminal.app への入力を拒否するためである。
+- 標準の Terminal.app を agent-desktop で操作する方法は取らない。Terminal.app への入力は `--allow-app com.apple.Terminal` の明示が要り、利用者の実際のシェルでコマンドが動くためである。

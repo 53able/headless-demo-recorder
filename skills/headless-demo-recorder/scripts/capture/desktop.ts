@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { copyFile, lstat, rename, rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { bundleRefusal, parseBundleId } from "../appguard.ts";
+import { ancestorsOf, bundleRefusal, launcherRunsInside, optInRefusal, parseBundleId, parsePs, requiresOptIn, sharedSessionUnder, type ProcRow } from "../appguard.ts";
 import { abortSignal, exists, ffprobe, log, parseNdjson, run, runOk, sleep, spawnEnv, toMp4 } from "../exec.ts";
 import { centerOf } from "../compile.ts";
 import type { ActionEvent, CaptureResult, DesktopSource, DesktopTarget, NRect, Step } from "../types.ts";
@@ -45,9 +45,22 @@ async function adoptRecording(stdout: string, workDir: string): Promise<void> {
 export type DesktopOptions = {
   /** Bundle IDs input may be sent to (`--allow-app`). Deny-listed apps are refused regardless. */
   allowApps?: string[];
+  /** The process that started this capture and its ancestors (`processAncestors`). A session server
+   * passes its launcher's, since it is reparented to launchd once `session start` exits; null means
+   * unknown, which refuses opt-in apps. Omitted: this process's own ancestors. */
+  launcherAncestors?: number[] | null;
   /** Awaited once the recorder runs; video before the moment it resolves is trimmed (see `t0EpochMs`). */
   ready?: () => Promise<void>;
 };
+
+async function processTable(): Promise<ProcRow[]> {
+  const r = await run("ps", ["-A", "-o", "pid=,ppid=,comm="], { timeoutMs: 10_000 });
+  if (r.code !== 0) throw new Error("APP_NOT_ALLOWED: cannot read the process table (fail closed)");
+  return parsePs(r.stdout);
+}
+
+/** This process and its ancestors, or undefined when they cannot be read. */
+export const processAncestors = (): Promise<number[] | undefined> => processTable().then((rows) => ancestorsOf(rows, process.pid), () => undefined);
 
 async function ad<T>(...args: string[]): Promise<T> {
   const out = await runOk("agent-desktop", args, { timeoutMs: 60_000 }).catch((e: Error) => {
@@ -75,11 +88,27 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
   // Input goes to the window the recorder records: `openscreen record --window` takes the first title containing it.
   const win = wins.find((w) => w.app_name === app && w.visible && w.bounds.width > 0 && (!src.window || w.title.includes(src.window)));
   if (!win) throw new Error(`no visible window for app ${app}${src.window ? ` with "${src.window}" in its title` : ""}`);
+  let cliRunsInside: boolean | undefined; // whether the launcher runs inside the app; fixed, checked once
+  let checkedInside = false;
+  let optIn = false;
   /** Refuse unless the window's process is an allowed app. Called before every input. */
   const guard = async () => {
     const r = win.pid ? await run("lsappinfo", ["info", "-only", "bundleid", String(win.pid)], { timeoutMs: 10_000 }) : undefined;
-    const why = bundleRefusal(r?.code === 0 ? parseBundleId(r.stdout) : undefined, opts.allowApps?.length ? opts.allowApps : undefined);
+    const bundleId = r?.code === 0 ? parseBundleId(r.stdout) : undefined;
+    const why = bundleRefusal(bundleId, opts.allowApps?.length ? opts.allowApps : undefined);
     if (why) throw new Error(`APP_NOT_ALLOWED: ${why}`);
+    optIn = !!bundleId && requiresOptIn(bundleId);
+    if (optIn) {
+      const rows = await processTable();
+      if (!checkedInside) {
+        cliRunsInside = launcherRunsInside(opts.launcherAncestors, rows, process.pid, win.pid!);
+        checkedInside = true;
+      }
+      const all = await ad<Win[]>("list-windows", "--app", app);
+      const windowIds = all.filter((w) => w.pid === win.pid).map((w) => w.id);
+      const shell = optInRefusal(bundleId!, { windowIds, recordedId: win.id, cliRunsInside, sharedSession: sharedSessionUnder(rows, win.pid!) });
+      if (shell) throw new Error(`APP_NOT_ALLOWED: ${shell}`);
+    }
   };
   await guard(); // before the recorder starts
   const title = src.window ?? win.title;
@@ -200,6 +229,8 @@ export async function startDesktop(src: DesktopSource, workDir: string, opts: De
             point, zoom: step.zoom, redact: step.redact,
           });
           await guard();
+          // One fill must not run several commands: a command that opens a window would take the rest of the keys.
+          if (optIn && step.action === "fill" && /[\r\n]/.test(step.value)) throw new Error("APP_NOT_ALLOWED: a fill into a shell must not contain a newline; send it with a separate press return");
           if (step.action === "click") await ad("click", ref);
           else if (step.action === "fill") await ad("type", ref, step.value);
           else await ad("select", ref, step.value);

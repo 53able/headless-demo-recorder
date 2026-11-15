@@ -110,6 +110,8 @@ Codex で `doctor` の権限項目が `Operation not permitted`、または `ren
   - 確認したうえで無害なステップ（計算機の「すべて消去」など）は、**そのステップに** `"allowDestructive": true` を付ける。
   - シナリオ全体に付ける `allowDestructive` は、実際にその操作を行うデモに限る。必ず利用者の承認を得てから使う。
   - 判定は単語リストによる推定にすぎない。`check` を通過しても、そのステップが安全だとは保証されない。
+- Terminal.app への入力は `--allow-app com.apple.Terminal` を明示したときだけ通る。打ち込んだ文字はシェルでコマンドとして実行され、`check` はその中身を検査しない。使うのは利用者がターミナルの操作を頼んだときに限り、打つコマンドは事前に利用者に示す。
+  - 入力のたびに次を確かめ、満たさなければ `APP_NOT_ALLOWED` で止まる。Terminal.app のウィンドウが録画中の1つだけであること。この CLI 自身が Terminal.app の中で動いていないこと。その配下で tmux・screen・ssh などが動いていないこと。`fill` の値に改行が無いこと（実行は `press return` で分ける）。ウィンドウや tmux を閉じるのは利用者に頼む。
 - agent-desktop はヘッドレスで動く。利用者が物理入力を許可しない限り、`--headed` を付けない。
 - デスクトップ録画は実際のウィンドウを録る。上に重なった通知も映り込む。
 - `openscreen` をサブコマンドなし、または `--version` 付きで実行しない。GUI が起動する。`doctor` は `openscreen help` を使う。

@@ -26,6 +26,9 @@ export type SessionConfig = {
   group?: string;
   keepWork: boolean;
   idleTimeoutMs: number;
+  /** `session start` and its ancestors, for a desktop source: whether the agent runs inside the
+   * recorded app (see `DesktopOptions.launcherAncestors`). Absent: unknown. */
+  launcherAncestors?: number[];
 };
 export type Request =
   | { op: "status" }

@@ -33,7 +33,7 @@ export function asToolError(e: unknown, stage: Stage, artifacts?: Record<string,
       "earlier steps already ran in the app; reset its state, re-explore the UI at that step (snapshot), fix the target, then capture --force", artifacts);
   }
   if (stage === "capture" && message.startsWith("APP_NOT_ALLOWED:")) {
-    return new ToolError(stage, "APP_NOT_ALLOWED", message, "no", "the target window is not an allowed app; check --allow-app and the window the scenario resolves to", artifacts);
+    return new ToolError(stage, "APP_NOT_ALLOWED", message, "no", "the target window is not an allowed app; check --allow-app and the window the scenario resolves to (Terminal.app also needs to be named in --allow-app, have only the recorded window open, run no tmux/screen/ssh, not be the app running this CLI, and get no newline in a fill)", artifacts);
   }
   // Capture failures can leave the app half-operated: never mark them safe.
   const retry: Retry = stage === "capture" ? "no" : "after-fix";
