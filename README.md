@@ -297,7 +297,7 @@ headless-demo-recorder session stop out/s.project                    # 止めて
 - 1プロセスで同時に録画できるのは composition の2本まで。別プロセスの `run` の同時実行や、同じシナリオを参照する2つの composition の同時実行は、ロックが無いため project dir を壊しうる。
 - `openscreen record` は録画をアプリのフォルダ（macOS では `~/Library/Application Support/openscreen/recordings/`）に書く。desktop の capture は、録画が終わるとその動画・カーソル情報・session ファイルを project の `work/` に移す（`--keep-work` を付けなければ work ごと消える）。アプリの `media-links.registry.json` には参照が残るが、書き換えない。
 - desktop の録画は同時に2本録れる（`openscreen record --window` はウィンドウ単位で、重なっていても個別に録れる）。ヘッドレスの `fill` はアクセシビリティ API で対象要素に直接届き、`press` は対象アプリのプロセスに届くため、もう一方のアプリの操作や前面化で文字が欠けることはなかった（2026-11 実測: TextEdit への入力と計算機のクリック・前面化を同時に各3回、欠落なし）。
-- agent-browser（0.41.1 で確認）は `--allowed-domains` の指定時に `window.WebSocket` を差し替えるが、`WebSocket.OPEN` などの定数を引き継がない。`readyState === WebSocket.OPEN` を確かめてから送信するページ（ttyd など）は、何も送信できなくなる。`--allow-origin` を指定したときは、スキルの `scripts/capture/ws-constants.js` を初期化スクリプトとして差し込んで定数を補う。
+- agent-browser は `--allowed-domains` の指定時に `window.WebSocket` を差し替えるが、`WebSocket.OPEN` などの定数を引き継がない（0.41.1〜0.43.0 で確認）。0.42.0 からは、ページの読み込みの後にもう一度差し替える。`readyState === WebSocket.OPEN` を確かめてから送信するページ（ttyd など）は、何も送信できなくなる。`--allow-origin` を指定したときは、スキルの `scripts/capture/ws-constants.js` を初期化スクリプトとして差し込み、後から差し替えられた `WebSocket` にも定数を補う。`tests/ws-constants.test.ts` が、読み込みの後に開いた WebSocket で送信できることを実物の agent-browser で確かめる。
 - 書き出しでは OpenScreen が余白と背景を付けるため、出力の解像度とフレームレートは入力と一致しない（[`references/file-source.md`](skills/headless-demo-recorder/references/file-source.md)）。
 
 ## 開発
